@@ -1,0 +1,119 @@
+# MayaNAS GCP Terraform Configuration
+# Copy this file to terraform.tfvars and edit with your values
+
+# =============================================================================
+# REQUIRED
+# =============================================================================
+
+# Your GCP project ID
+project_id = "your-gcp-project-id"
+
+# =============================================================================
+# DEPLOYMENT OPTIONS
+# =============================================================================
+
+# GCP region for deployment
+region = "us-central1"
+
+# Cluster name (lowercase letters, numbers, hyphens)
+cluster_name = "mayanas"
+
+# Deployment type: "single", "active-passive", or "active-active"
+# - single: 1 node, no HA (dev/test)
+# - active-passive: 2 nodes, failover HA
+# - active-active: 2 nodes, load-balanced HA (recommended for production)
+deployment_type = "active-active"
+
+# =============================================================================
+# COMPUTE
+# =============================================================================
+
+# Machine type for MayaNAS instances
+# Recommended: n2-standard-4 (small), n2-standard-8 (medium), n2-standard-16 (large)
+machine_type = "n2-standard-4"
+
+# Use Spot VMs for cost savings (60-90% cheaper, may be preempted)
+# Recommended: true for dev/test, false for production
+use_spot_vms = false
+
+# =============================================================================
+# STORAGE
+# =============================================================================
+
+# Number of GCS buckets per node (1-12)
+# More buckets = higher aggregate throughput to cloud storage
+bucket_count = 1
+
+# Metadata disk size in GB (10-2000)
+# Stores ZFS metadata, affects max file count
+metadata_disk_size_gb = 100
+
+# Allow terraform to destroy buckets with data (use with caution)
+force_destroy_buckets = false
+
+# =============================================================================
+# NETWORK
+# =============================================================================
+
+# VPC network name (use "default" for default VPC)
+network_name = "default"
+
+# Subnet name (leave empty for auto-select)
+# subnet_name = ""
+
+# CIDR ranges allowed for SSH access
+# SECURITY: Restrict to your IP range in production
+ssh_source_ranges = ["0.0.0.0/0"]
+
+# =============================================================================
+# ACCESS
+# =============================================================================
+
+# SSH public key for instance access (optional)
+# If empty, use gcloud compute ssh to connect
+# ssh_public_key = "ssh-rsa AAAA... user@host"
+
+# =============================================================================
+# IMAGE (usually leave as defaults - uses latest from image family)
+# =============================================================================
+
+# Image family (uses latest image automatically)
+# source_image_family = "mayanas-enterprise"
+
+# To pin to a specific image version (overrides family):
+# source_image = "mayanas19-osimage-20260113"
+
+# =============================================================================
+# SHARES (NFS/SMB exports)
+# =============================================================================
+
+# Default creates one NFS share named "share1"
+# To customize or add more shares:
+# shares = [
+#   {
+#     name       = "share1"
+#     recordsize = "1024K"    # 512K, 1024K, 2048K, or 4096K
+#     export     = "nfs"      # nfs, nfs3, smb, or multi
+#   },
+#   {
+#     name        = "smbshare"
+#     recordsize  = "1024K"
+#     export      = "smb"
+#     smb_profile = "windows"  # posix, windows, or multiprotocol
+#     smb_user    = "smbuser"
+#     smb_password = "changeme"
+#   }
+# ]
+
+# =============================================================================
+# ADVANCED (usually leave as defaults)
+# =============================================================================
+
+# Specific zones for deployment (empty = auto-select)
+# zones = ["us-central1-a", "us-central1-b"]
+
+# Enable multi-zone HA (regional disks, 2x disk cost)
+# multi_zone = false
+
+# Environment label
+# environment = "production"

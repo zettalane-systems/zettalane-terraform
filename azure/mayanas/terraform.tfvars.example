@@ -1,0 +1,91 @@
+# MayaNAS Azure Terraform Configuration
+# Copy this file to terraform.tfvars and edit with your values
+
+# =============================================================================
+# REQUIRED
+# =============================================================================
+
+# Azure Resource Group name (will be created)
+resource_group_name = "rg-mayanas"
+
+# =============================================================================
+# DEPLOYMENT OPTIONS
+# =============================================================================
+
+# Azure region (empty = use Azure CLI default)
+location = "eastus"
+
+# Cluster name (lowercase, 3-63 chars, alphanumeric and hyphens)
+# Leave empty for auto-generated name
+cluster_name = ""
+
+# Deployment type: "single", "active-passive", or "active-active"
+# - single: 1 node, no HA (dev/test)
+# - active-passive: 2 nodes, failover HA (default)
+# - active-active: 2 nodes, load-balanced HA
+deployment_type = "active-passive"
+
+# Environment label
+environment = "prod"
+
+# =============================================================================
+# COMPUTE
+# =============================================================================
+
+# Azure VM size
+# Recommended: Standard_D4s_v3 (small), Standard_D8s_v3 (medium), Standard_D16s_v3 (large)
+vm_size = "Standard_D4s_v3"
+
+# Use Spot VMs for cost savings (60-90% cheaper, may be evicted)
+# Recommended: true for dev/test, false for production
+use_spot_instance = false
+
+# =============================================================================
+# STORAGE
+# =============================================================================
+
+# Number of metadata disks (1-4)
+metadata_disk_count = 1
+
+# Metadata disk size in GB
+metadata_disk_size_gb = 100
+
+# Storage container count for data tiering
+storage_container_count = 1
+
+# =============================================================================
+# NETWORK
+# =============================================================================
+
+# Virtual Network name (empty = create new)
+# vnet_name = ""
+
+# Subnet name (empty = create new)
+# subnet_name = ""
+
+# CIDR blocks for SSH access
+# SECURITY: Restrict to your IP range in production
+ssh_cidr_blocks = ["0.0.0.0/0"]
+
+# =============================================================================
+# ACCESS
+# =============================================================================
+
+# SSH public key content (required)
+# ssh_public_key = "ssh-rsa AAAA... user@host"
+
+# Or use Azure SSH Public Key resource ID (alternative)
+# ssh_key_resource_id = "/subscriptions/.../providers/Microsoft.Compute/sshPublicKeys/mykey"
+
+# =============================================================================
+# ADVANCED (usually leave as defaults)
+# =============================================================================
+
+# VIP mechanism: "load-balancer" or "custom-route"
+# vip_mechanism = "custom-route"
+
+# Availability zones for multi-zone HA (empty = auto-select)
+# availability_zones = ["1", "2"]
+
+# Enable multi-zone deployment
+# multi_zone = false

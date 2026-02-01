@@ -1,0 +1,36 @@
+# MayaScale AWS Configuration Example
+# Copy this file to terraform.tfvars and customize
+
+# Required: EC2 Key Pair name for SSH access
+key_pair_name = "your-key-pair"
+
+# Cluster name (auto-generated if not specified)
+cluster_name = "mayascale-demo"
+
+# AWS region
+region = "us-east-1"
+
+# Performance policy - determines instance type, storage, IOPS targets
+# Options:
+#   zonal-basic-performance     - 57K write / 204K read IOPS (i4i.xlarge)
+#   zonal-standard-performance  - 135K write / 346K read IOPS (i3en.2xlarge)
+#   zonal-medium-performance    - 175K write / 650K read IOPS (i3en.xlarge)
+#   zonal-high-performance      - 368K write / 992K read IOPS (i3en.6xlarge)
+#   zonal-ultra-performance     - 528K write / 1.35M read IOPS (i3en.12xlarge)
+#   regional-*                  - Cross-AZ HA (90% write, same read)
+performance_policy = "zonal-medium-performance"
+
+# Use spot instances for 50-70% cost savings (may be interrupted)
+use_spot_instances = true
+
+# Optional: Specific availability zone (auto-selected if not specified)
+# availability_zone = "us-east-1a"
+
+# Optional: VPC ID (uses default VPC if not specified)
+# vpc_id = "vpc-12345678"
+
+# Optional: CIDR blocks allowed for SSH access
+# ssh_cidr_blocks = ["10.0.0.0/8", "172.16.0.0/12"]
+
+# Optional: Override instance type (auto-selected based on policy)
+# instance_type_override = "i3en.6xlarge"

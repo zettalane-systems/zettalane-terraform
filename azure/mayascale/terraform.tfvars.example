@@ -1,0 +1,39 @@
+# MayaScale Azure Configuration Example
+# Copy this file to terraform.tfvars and customize
+
+# Required: Azure subscription ID
+subscription_id = "your-subscription-id"
+
+# Required: Cluster name (max 15 chars, lowercase letters, numbers, hyphens only)
+cluster_name = "mayascale-demo"
+
+# Azure region
+location = "westus"
+
+# Performance policy - determines VM size and NVMe disk count
+# Options:
+#   zonal-basic-performance     - 55K write / 137K read IOPS (L2as_v4)
+#   zonal-standard-performance  - 144K write / 360K read IOPS (L4aos_v4)
+#   zonal-medium-performance    - 288K write / 720K read IOPS (L8aos_v4)
+#   zonal-high-performance      - 864K write / 2.16M read IOPS (L24aos_v4)
+#   zonal-ultra-performance     - 1.15M write / 2.88M read IOPS (L32aos_v4)
+#   regional-*                  - Cross-zone HA (83% write, same read)
+performance_policy = "zonal-standard-performance"
+
+# Instance family: laosv4 (AMD optimized, recommended), lasv4, lsv3, lsv2
+instance_family = "laosv4"
+
+# Use spot VMs for cost savings (may be evicted)
+use_spot_vms = false
+
+# Optional: SSH public key for direct access
+# ssh_public_key = "ssh-rsa AAAAB... user@host"
+
+# Optional: Resource group (created if not specified)
+# resource_group_name = "my-resource-group"
+
+# Optional: Virtual network (created if not specified)
+# vnet_name = "my-vnet"
+
+# Optional: SSH access CIDR ranges
+# ssh_source_ranges = ["10.0.0.0/8", "172.16.0.0/12"]

@@ -1,0 +1,107 @@
+# MayaNAS AWS Terraform Configuration
+# Copy this file to terraform.tfvars and edit with your values
+
+# =============================================================================
+# REQUIRED
+# =============================================================================
+
+# EC2 Key Pair name for SSH access (must exist in your AWS account)
+key_pair_name = "your-key-pair-name"
+
+# =============================================================================
+# IMAGE (usually leave empty for auto-detection)
+# =============================================================================
+
+# AMI ID - Leave empty to auto-detect from marketplace subscription
+# The module will automatically find the MayaNAS AMI using the product code
+# ami_id = ""
+
+# To use a specific AMI (uncomment and set):
+# ami_id = "ami-0123456789abcdef0"
+
+# =============================================================================
+# DEPLOYMENT OPTIONS
+# =============================================================================
+
+# Cluster name (lowercase, 3-63 chars, alphanumeric and hyphens)
+# Leave empty for auto-generated name
+cluster_name = ""
+
+# Deployment type: "single", "active-passive", or "active-active"
+# - single: 1 node, no HA (dev/test)
+# - active-passive: 2 nodes, failover HA (default)
+# - active-active: 2 nodes, load-balanced HA
+deployment_type = "active-passive"
+
+# Environment label
+environment = "prod"
+
+# =============================================================================
+# COMPUTE
+# =============================================================================
+
+# EC2 instance type
+# Recommended: t3.medium (small), r5.xlarge (medium), r5.2xlarge (large)
+instance_type = "t3.medium"
+
+# Use Spot instances for cost savings (60-90% cheaper, may be interrupted)
+# Recommended: true for dev/test, false for production
+use_spot_instance = false
+
+# =============================================================================
+# STORAGE
+# =============================================================================
+
+# Number of S3 buckets for data tiering (1-12)
+bucket_count = 1
+
+# Metadata disk size in GB
+metadata_disk_size_gb = 100
+
+# Metadata disk type: gp2, gp3, io1, io2
+metadata_disk_type = "gp3"
+
+# =============================================================================
+# NETWORK
+# =============================================================================
+
+# VPC ID (leave empty to use default VPC)
+# vpc_id = ""
+
+# Availability Zone (leave empty for auto-selection)
+# availability_zone = "us-east-1a"
+
+# =============================================================================
+# SHARES (NFS/SMB exports)
+# =============================================================================
+
+# Default creates one NFS share named "share1"
+# To customize or add more shares:
+# shares = [
+#   {
+#     name       = "share1"
+#     recordsize = "1024K"    # 512K, 1024K, 2048K, or 4096K
+#     export     = "nfs"      # nfs, nfs3, smb, or multi
+#   },
+#   {
+#     name        = "smbshare"
+#     recordsize  = "1024K"
+#     export      = "smb"
+#     smb_profile = "windows"  # posix, windows, or multiprotocol
+#     smb_user    = "smbuser"
+#     smb_password = "changeme"
+#   }
+# ]
+
+# =============================================================================
+# ADVANCED (usually leave as defaults)
+# =============================================================================
+
+# Use IAM role for S3 access (recommended) vs access keys
+# use_iam_role = true
+
+# Boot disk type: gp2, gp3, io1, io2
+# boot_disk_type = "gp3"
+
+# Boot disk size in GB
+# boot_disk_size_gb = 30

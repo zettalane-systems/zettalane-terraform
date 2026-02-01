@@ -1,0 +1,11 @@
+#cloud-config
+users:
+  - name: ${admin_username}
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+packages:
+  - nfs-common
+  - fio

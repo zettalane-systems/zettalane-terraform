@@ -1,0 +1,43 @@
+# MayaScale GCP Configuration Example
+# Copy this file to terraform.tfvars and customize
+
+# Required: Your GCP project ID
+project_id = "your-project-id"
+
+# Required: Deployment name (used for resource naming)
+cluster_name = "mayascale-demo"
+
+# Region and zone
+region = "us-central1"
+zone   = "us-central1-a"
+
+# Performance policy - determines machine type and local SSD count
+# Options:
+#   zonal-standard-performance  - 130K write / 380K read IOPS
+#   zonal-medium-performance    - 200K write / 700K read IOPS
+#   zonal-high-performance      - 350K write / 900K read IOPS
+#   zonal-ultra-performance     - 700K write / 1.4M read IOPS
+#   regional-*                  - Cross-zone HA (90% write, same read)
+performance_policy = "zonal-medium-performance"
+
+# Use spot VMs for cost savings (60-90% discount, may be preempted)
+use_spot_vms = false
+
+# Optional: Override machine type (auto-selected based on policy)
+# machine_type = "n2-highcpu-32"
+
+# Optional: SSH public key for direct access
+# ssh_public_key = "ssh-rsa AAAAB... user@host"
+
+# Optional: Client protocol (nvme, iscsi, or both)
+# client_protocol = "nvme"
+
+# Optional: NFS/SMB shares (MayaScale can also serve file protocols)
+# shares = [
+#   {
+#     name        = "share1"
+#     recordsize  = "128K"
+#     export      = "nfs"
+#     nfs_options = "*(rw,sync,no_subtree_check)"
+#   }
+# ]
