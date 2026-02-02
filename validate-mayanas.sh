@@ -83,9 +83,9 @@ CLUSTER_TYPE="single"
 USE_SPOT="false"
 
 # Tier to machine type mapping
-declare -A GCP_TIERS=( ["basic"]="n2-standard-4" ["standard"]="n2-standard-8" ["performance"]="n2-standard-16" )
-declare -A AWS_TIERS=( ["basic"]="c6in.xlarge" ["standard"]="c6in.2xlarge" ["performance"]="c6in.4xlarge" )
-declare -A AZURE_TIERS=( ["basic"]="Standard_D4s_v3" ["standard"]="Standard_D8s_v3" ["performance"]="Standard_D16s_v3" )
+declare -A GCP_TIERS=( ["basic"]="n2-standard-4" ["standard"]="n2-standard-8" ["performance"]="n2-standard-16" ["ultra"]="n2-standard-32" )
+declare -A AWS_TIERS=( ["basic"]="c6in.xlarge" ["standard"]="c6in.2xlarge" ["performance"]="c6in.4xlarge" ["ultra"]="c6in.8xlarge" )
+declare -A AZURE_TIERS=( ["basic"]="Standard_D4s_v5" ["standard"]="Standard_D8s_v5" ["performance"]="Standard_D16s_v5" ["ultra"]="Standard_D32s_v5" )
 
 usage() {
     cat <<EOF
@@ -128,9 +128,12 @@ CLUSTER TYPES:
 
 PERFORMANCE TIERS:
     Tier          GCP              AWS              Azure
-    basic         n2-standard-4    c6in.xlarge      Standard_D4s_v3
-    standard      n2-standard-8    c6in.2xlarge     Standard_D8s_v3
-    performance   n2-standard-16   c6in.4xlarge     Standard_D16s_v3
+    basic         n2-standard-4    c6in.xlarge      Standard_D4s_v5
+    standard      n2-standard-8    c6in.2xlarge     Standard_D8s_v5
+    performance   n2-standard-16   c6in.4xlarge     Standard_D16s_v5
+    ultra         n2-standard-32   c6in.8xlarge     Standard_D32s_v5
+
+    Use --machine-type to override (e.g., n2-standard-48 or n2-standard-64)
 
 EXAMPLES:
     # GCP with standard tier
@@ -251,8 +254,8 @@ else
 fi
 
 # Validate tier
-if [[ ! "$TIER" =~ ^(basic|standard|performance)$ ]]; then
-    fail "Invalid tier: $TIER (use basic, standard, or performance)"
+if [[ ! "$TIER" =~ ^(basic|standard|performance|ultra)$ ]]; then
+    fail "Invalid tier: $TIER (use basic, standard, performance, or ultra)"
     exit 1
 fi
 
@@ -351,6 +354,70 @@ if [ "$DESTROY_MODE" = "true" ]; then
                 STORAGE_DESTROY_OK=true
                 break
             fi
+            # Check if failure is due to bucket deletion - use cloud CLI to force delete
+            if [ "$CLOUD" = "gcp" ] && grep -q "could not delete non-empty bucket" "$RESULTS_DIR/storage_destroy.log" 2>/dev/null; then
+                warn "GCS bucket deletion failed - using gsutil parallel delete..."
+                BUCKET_COUNT=$(terraform state list 2>/dev/null | grep -c "google_storage_bucket.mayanas_data" || echo "0")
+                if [ "$BUCKET_COUNT" -gt 0 ]; then
+                    # Collect bucket names and delete in parallel
+                    BUCKET_PIDS=""
+                    for i in $(seq 0 $((BUCKET_COUNT - 1))); do
+                        BUCKET_NAME=$(terraform state show "google_storage_bucket.mayanas_data[$i]" 2>/dev/null | grep "^    name" | awk '{print $3}' | tr -d '"' || true)
+                        if [ -n "$BUCKET_NAME" ]; then
+                            log "Deleting bucket in background: gs://$BUCKET_NAME/"
+                            gsutil -m rm -r "gs://$BUCKET_NAME" >> "$RESULTS_DIR/storage_destroy.log" 2>&1 &
+                            BUCKET_PIDS="$BUCKET_PIDS $!"
+                        fi
+                    done
+                    # Wait for all parallel deletions
+                    if [ -n "$BUCKET_PIDS" ]; then
+                        log "Waiting for bucket deletions to complete..."
+                        for pid in $BUCKET_PIDS; do
+                            wait $pid 2>/dev/null || true
+                        done
+                    fi
+                    # Remove buckets from state
+                    for i in $(seq 0 $((BUCKET_COUNT - 1))); do
+                        terraform state rm "google_storage_bucket.mayanas_data[$i]" >> "$RESULTS_DIR/storage_destroy.log" 2>&1 || true
+                    done
+                    log "Retrying terraform destroy..."
+                    if terraform destroy -auto-approve >> "$RESULTS_DIR/storage_destroy.log" 2>&1; then
+                        STORAGE_DESTROY_OK=true
+                        break
+                    fi
+                fi
+            elif [ "$CLOUD" = "aws" ] && grep -q "BucketNotEmpty" "$RESULTS_DIR/storage_destroy.log" 2>/dev/null; then
+                warn "S3 bucket deletion failed - using aws s3 rm..."
+                BUCKET_COUNT=$(terraform state list 2>/dev/null | grep -c "aws_s3_bucket.mayanas_data" || echo "0")
+                if [ "$BUCKET_COUNT" -gt 0 ]; then
+                    # Collect bucket names and delete in parallel
+                    BUCKET_PIDS=""
+                    for i in $(seq 0 $((BUCKET_COUNT - 1))); do
+                        BUCKET_NAME=$(terraform state show "aws_s3_bucket.mayanas_data[$i]" 2>/dev/null | grep "^    bucket " | awk '{print $3}' | tr -d '"' || true)
+                        if [ -n "$BUCKET_NAME" ]; then
+                            log "Deleting bucket in background: s3://$BUCKET_NAME/"
+                            (aws s3 rm "s3://$BUCKET_NAME" --recursive && aws s3 rb "s3://$BUCKET_NAME" --force) >> "$RESULTS_DIR/storage_destroy.log" 2>&1 &
+                            BUCKET_PIDS="$BUCKET_PIDS $!"
+                        fi
+                    done
+                    # Wait for all parallel deletions
+                    if [ -n "$BUCKET_PIDS" ]; then
+                        log "Waiting for bucket deletions to complete..."
+                        for pid in $BUCKET_PIDS; do
+                            wait $pid 2>/dev/null || true
+                        done
+                    fi
+                    # Remove buckets from state
+                    for i in $(seq 0 $((BUCKET_COUNT - 1))); do
+                        terraform state rm "aws_s3_bucket.mayanas_data[$i]" >> "$RESULTS_DIR/storage_destroy.log" 2>&1 || true
+                    done
+                    log "Retrying terraform destroy..."
+                    if terraform destroy -auto-approve >> "$RESULTS_DIR/storage_destroy.log" 2>&1; then
+                        STORAGE_DESTROY_OK=true
+                        break
+                    fi
+                fi
+            fi
             if [ $attempt -lt 3 ]; then
                 WAIT_TIME=$((attempt * 60))
                 warn "Destroy attempt $attempt failed, retrying in ${WAIT_TIME}s..."
@@ -400,26 +467,8 @@ if [ "$SKIP_DEPLOY" = "true" ]; then
         fail "No terraform.tfstate found. Run without --skip-deploy first."
         exit 1
     fi
-elif [ -f "terraform.tfstate" ]; then
-    # Check if deployment is complete by checking for node1_private_ip output
-    EXISTING_IP=$(terraform output -raw node1_private_ip 2>/dev/null || echo "")
-    if [ -n "$EXISTING_IP" ] && [ "$EXISTING_IP" != "null" ]; then
-        log "Existing deployment found - reusing (run with -d to destroy first)"
-    else
-        warn "Incomplete deployment found - running apply to complete"
-        # Initialize if needed
-        if [ ! -d ".terraform" ]; then
-            terraform init -upgrade > "$RESULTS_DIR/storage_init.log" 2>&1 || true
-        fi
-        log "Running terraform apply (log: $RESULTS_DIR/storage_apply.log)..."
-        if ! terraform_apply_with_retry "$RESULTS_DIR/storage_apply.log"; then
-            fail "Terraform apply failed - see $RESULTS_DIR/storage_apply.log"
-            tail -20 "$RESULTS_DIR/storage_apply.log"
-            exit 1
-        fi
-        success "Storage deployed"
-    fi
 else
+    # Always generate fresh tfvars from command-line args
     log "Generating terraform.tfvars..."
 
     case "$CLOUD" in
@@ -436,6 +485,9 @@ bucket_count = $BUCKET_COUNT
 use_spot_vms = $USE_SPOT
 force_destroy_buckets = true
 
+# TODO: REMOVE BEFORE COMMIT - devel image for testing
+source_image_project = "zettalane-dev"
+source_image = "mayanas19-osimage-20260122"
 EOF
             ;;
         aws)
@@ -449,6 +501,8 @@ use_spot_instance = $USE_SPOT
 ssh_cidr_blocks = ["0.0.0.0/0"]
 force_destroy_buckets = true
 
+# TODO: REMOVE BEFORE COMMIT - devel image for testing
+ami_id = "ami-0fb9b36c5ccadb652"
 EOF
             if [ -n "$ZONE" ]; then
                 echo "availability_zone = \"$ZONE\"" >> terraform.tfvars
@@ -471,6 +525,8 @@ use_spot_instance = $USE_SPOT
 ssh_cidr_blocks = ["0.0.0.0/0"]
 $([ -n "$SSH_PUBLIC_KEY" ] && echo "ssh_public_key = \"$SSH_PUBLIC_KEY\"")
 
+# TODO: REMOVE BEFORE COMMIT - devel image for testing
+vm_image_id = "/subscriptions/a1374ce4-3087-440a-9af3-674d883c6d3f/resourceGroups/zettalane-dev/providers/Microsoft.Compute/galleries/zettalaneDev/images/mayanas19/versions/latest"
 
 # Performance test share configuration
 shares = [
@@ -487,16 +543,54 @@ EOF
             ;;
     esac
 
-    log "Running terraform init..."
-    terraform init -upgrade > "$RESULTS_DIR/storage_init.log" 2>&1 || terraform init > "$RESULTS_DIR/storage_init.log" 2>&1
+    # Check if we can reuse existing deployment
+    if [ -f "terraform.tfstate" ]; then
+        EXISTING_IP=$(terraform output -raw node1_private_ip 2>/dev/null || echo "")
+        if [ -n "$EXISTING_IP" ] && [ "$EXISTING_IP" != "null" ]; then
+            # Check if deployed config matches requested config
+            DEPLOYED_INFO=$(terraform output -json deployment_info 2>/dev/null || echo "{}")
+            DEPLOYED_TYPE=$(echo "$DEPLOYED_INFO" | jq -r '.deployment_type // "single"')
+            DEPLOYED_MACHINE=$(echo "$DEPLOYED_INFO" | jq -r '.machine_type // ""')
 
-    log "Running terraform apply (log: $RESULTS_DIR/storage_apply.log)..."
-    if ! terraform_apply_with_retry "$RESULTS_DIR/storage_apply.log"; then
-        fail "Terraform apply failed - see $RESULTS_DIR/storage_apply.log"
-        tail -20 "$RESULTS_DIR/storage_apply.log"
-        exit 1
+            CONFIG_CHANGED=false
+            if [ "$DEPLOYED_TYPE" != "$DEPLOYMENT_TYPE" ]; then
+                warn "Cluster type differs: deployed='$DEPLOYED_TYPE' requested='$DEPLOYMENT_TYPE'"
+                CONFIG_CHANGED=true
+            fi
+            if [ -n "$DEPLOYED_MACHINE" ] && [ "$DEPLOYED_MACHINE" != "$RESOLVED_MACHINE_TYPE" ]; then
+                warn "Machine type differs: deployed='$DEPLOYED_MACHINE' requested='$RESOLVED_MACHINE_TYPE'"
+                CONFIG_CHANGED=true
+            fi
+            if [ "$CONFIG_CHANGED" = "true" ]; then
+                fail "Config changed - run with -d to destroy first"
+                exit 1
+            fi
+            log "Existing deployment found - reusing (run with -d to destroy first)"
+        else
+            warn "Incomplete deployment found - will complete with apply"
+            log "Running terraform init..."
+            terraform init -upgrade > "$RESULTS_DIR/storage_init.log" 2>&1 || terraform init > "$RESULTS_DIR/storage_init.log" 2>&1
+            log "Running terraform apply (log: $RESULTS_DIR/storage_apply.log)..."
+            if ! terraform_apply_with_retry "$RESULTS_DIR/storage_apply.log"; then
+                fail "Terraform apply failed - see $RESULTS_DIR/storage_apply.log"
+                tail -20 "$RESULTS_DIR/storage_apply.log"
+                exit 1
+            fi
+            success "Storage deployed"
+        fi
+    else
+        # Fresh deployment
+        log "Running terraform init..."
+        terraform init -upgrade > "$RESULTS_DIR/storage_init.log" 2>&1 || terraform init > "$RESULTS_DIR/storage_init.log" 2>&1
+
+        log "Running terraform apply (log: $RESULTS_DIR/storage_apply.log)..."
+        if ! terraform_apply_with_retry "$RESULTS_DIR/storage_apply.log"; then
+            fail "Terraform apply failed - see $RESULTS_DIR/storage_apply.log"
+            tail -20 "$RESULTS_DIR/storage_apply.log"
+            exit 1
+        fi
+        success "Storage deployed"
     fi
-    success "Storage deployed"
 fi
 
 # Get storage outputs
@@ -532,6 +626,8 @@ get_output() {
 NODE1_IP=$(get_output node1_public_ip)
 NODE1_INTERNAL_IP=$(get_output node1_private_ip)
 VIP=$(get_output vip_address)
+VIP2=$(get_output vip_address_2)
+NODE2_IP=$(get_output node2_public_ip)
 
 # Cloud-specific SSH command
 case "$CLOUD" in
@@ -574,12 +670,30 @@ fi
 # Start client deployment in background (while we validate storage)
 CLIENT_DEPLOY_PID=""
 CLIENT_REUSED="false"
+CLIENT_MACHINE_TYPE=""
 if [ "$SKIP_CLIENT" = "false" ]; then
     CLIENT_DIR="$SCRIPT_DIR/$CLOUD/client-testing"
 
+    # Calculate client machine type (display before background deployment)
+    case "$CLOUD" in
+        gcp)
+            CLIENT_VCPUS=$(echo "$RESOLVED_MACHINE_TYPE" | grep -oE '[0-9]+$')
+            [ "$CLUSTER_TYPE" = "ha" ] && CLIENT_VCPUS=$((CLIENT_VCPUS * 2))
+            CLIENT_MACHINE_TYPE="n2-highcpu-${CLIENT_VCPUS}"
+            ;;
+        aws)
+            CLIENT_MACHINE_TYPE="c6in.2xlarge"  # Default AWS client
+            ;;
+        azure)
+            CLIENT_VCPUS=$(echo "$RESOLVED_MACHINE_TYPE" | grep -oE '[0-9]+')
+            [ "$CLUSTER_TYPE" = "ha" ] && CLIENT_VCPUS=$((CLIENT_VCPUS * 2))
+            CLIENT_MACHINE_TYPE="Standard_D${CLIENT_VCPUS}s_v5"
+            ;;
+    esac
+
     # Check if client already exists and is still running
     if [ -f "$CLIENT_DIR/terraform.tfstate" ]; then
-        log "Existing client found - refreshing in background..."
+        log "Existing client found ($CLIENT_MACHINE_TYPE) - refreshing in background..."
         (
             cd "$CLIENT_DIR" || exit 1
             # Refresh state and apply to ensure instance exists (spot may have been terminated)
@@ -588,19 +702,13 @@ if [ "$SKIP_CLIENT" = "false" ]; then
         CLIENT_DEPLOY_PID=$!
         CLIENT_REUSED="true"
     else
-        log "Starting client deployment in background..."
+        log "Starting client deployment in background ($CLIENT_MACHINE_TYPE)..."
         (
             cd "$CLIENT_DIR" || exit 1
 
             # Generate cloud-specific terraform.tfvars
             case "$CLOUD" in
                 gcp)
-                    # Client uses highcpu variant; double size for active-active
-                    CLIENT_VCPUS=$(echo "$RESOLVED_MACHINE_TYPE" | grep -oE '[0-9]+$')
-                    if [ "$CLUSTER_TYPE" = "ha" ]; then
-                        CLIENT_VCPUS=$((CLIENT_VCPUS * 2))
-                    fi
-                    CLIENT_MACHINE_TYPE="n2-highcpu-${CLIENT_VCPUS}"
                     cat > terraform.tfvars <<EOFCLIENT
 project_id = "$PROJECT_ID"
 zone = "$ZONE"
@@ -614,6 +722,7 @@ EOFCLIENT
                     cat > terraform.tfvars <<EOFCLIENT
 key_pair_name = "$KEY_PAIR_NAME"
 client_name = "${DEPLOYMENT_NAME}-client"
+instance_type = "$CLIENT_MACHINE_TYPE"
 ssh_public_key = "$SSH_PUBLIC_KEY"
 use_spot = $USE_SPOT
 EOFCLIENT
@@ -624,6 +733,7 @@ subscription_id = "$AZURE_SUB_ID"
 resource_group_name = "$RESOURCE_GROUP"
 location = "$LOCATION"
 client_name = "${DEPLOYMENT_NAME}-client"
+vm_size = "$CLIENT_MACHINE_TYPE"
 ssh_public_key = "$SSH_PUBLIC_KEY"
 vnet_name = "$VNET_NAME"
 subnet_name = "$SUBNET_NAME"
@@ -645,6 +755,9 @@ echo " MayaNAS Validation"
 echo "========================================"
 echo " Node1 IP: $NODE1_IP"
 echo " VIP:      ${VIP:-N/A (single node)}"
+[ -n "$VIP2" ] && echo " VIP2:     $VIP2"
+echo " Storage:  $RESOLVED_MACHINE_TYPE"
+[ -n "$CLIENT_MACHINE_TYPE" ] && echo " Client:   $CLIENT_MACHINE_TYPE"
 echo " SSH User: $SSH_USER"
 echo "========================================"
 echo ""
@@ -689,8 +802,18 @@ while [ $ELAPSED -lt $MAX_WAIT ]; do
         POOL_NAME=$(run_ssh "sudo zpool list -H -o name 2>/dev/null | head -1" 2>/dev/null || echo "")
         if [ -n "$POOL_NAME" ]; then
             CLUSTER_READY=true
-            success "MayaNAS cluster ready (pool: $POOL_NAME)"
-            break
+            success "Node1 ready (pool: $POOL_NAME)"
+            # For HA, also check node2
+            if [ -n "$VIP2" ] && [ -n "$NODE2_IP" ]; then
+                NODE2_POOL=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 mayanas@${NODE2_IP} "sudo zpool list -H -o name 2>/dev/null | head -1" 2>/dev/null || echo "")
+                if [ -n "$NODE2_POOL" ]; then
+                    success "Node2 ready (pool: $NODE2_POOL)"
+                else
+                    warn "Node2 pool not ready yet"
+                    CLUSTER_READY=false
+                fi
+            fi
+            [ "$CLUSTER_READY" = true ] && break
         fi
     fi
     log "Waiting for cluster setup... (${ELAPSED}s/${MAX_WAIT}s)"
@@ -712,7 +835,18 @@ if [ -n "$POOL_INFO" ]; then
     POOL_SIZE=$(echo "$POOL_INFO" | awk '{print $2}')
     POOL_FREE=$(echo "$POOL_INFO" | awk '{print $4}')
     POOL_HEALTH=$(echo "$POOL_INFO" | awk '{print $10}')
-    success "Pool: $POOL_NAME  Size: $POOL_SIZE  Free: $POOL_FREE  Health: $POOL_HEALTH"
+    success "Node1 Pool: $POOL_NAME  Size: $POOL_SIZE  Free: $POOL_FREE  Health: $POOL_HEALTH"
+    # For HA, also show node2 pool
+    if [ -n "$VIP2" ] && [ -n "$NODE2_IP" ]; then
+        POOL2_INFO=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 mayanas@${NODE2_IP} "sudo zpool list -H 2>/dev/null | head -1" 2>/dev/null || echo "")
+        if [ -n "$POOL2_INFO" ]; then
+            POOL2_NAME=$(echo "$POOL2_INFO" | awk '{print $1}')
+            POOL2_SIZE=$(echo "$POOL2_INFO" | awk '{print $2}')
+            POOL2_FREE=$(echo "$POOL2_INFO" | awk '{print $4}')
+            POOL2_HEALTH=$(echo "$POOL2_INFO" | awk '{print $10}')
+            success "Node2 Pool: $POOL2_NAME  Size: $POOL2_SIZE  Free: $POOL2_FREE  Health: $POOL2_HEALTH"
+        fi
+    fi
 else
     warn "Could not get pool info"
 fi
@@ -722,11 +856,19 @@ log "Test 4: NFS exports..."
 EXPORTS=$(run_ssh "sudo exportfs -v 2>/dev/null | head -5" 2>/dev/null || echo "")
 if [ -n "$EXPORTS" ]; then
     EXPORT_COUNT=$(echo "$EXPORTS" | wc -l)
-    # Get first export path from exportfs output (format: /path/to/share  client(options))
     FIRST_EXPORT=$(echo "$EXPORTS" | head -1 | awk '{print $1}')
-    # For NFSv4, strip /export prefix if present (fsid=0 root)
     NFS_EXPORT=$(echo "$FIRST_EXPORT" | sed 's|^/export||')
-    success "NFS exports: $EXPORT_COUNT configured (${NFS_EXPORT})"
+    success "Node1 NFS exports: $EXPORT_COUNT configured (${NFS_EXPORT})"
+    # For HA, also show node2 exports
+    if [ -n "$VIP2" ] && [ -n "$NODE2_IP" ]; then
+        EXPORTS2=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 mayanas@${NODE2_IP} "sudo exportfs -v 2>/dev/null | head -5" 2>/dev/null || echo "")
+        if [ -n "$EXPORTS2" ]; then
+            EXPORT2_COUNT=$(echo "$EXPORTS2" | wc -l)
+            FIRST_EXPORT2=$(echo "$EXPORTS2" | head -1 | awk '{print $1}')
+            NFS_EXPORT2=$(echo "$FIRST_EXPORT2" | sed 's|^/export||')
+            success "Node2 NFS exports: $EXPORT2_COUNT configured (${NFS_EXPORT2})"
+        fi
+    fi
 else
     warn "No NFS exports found - client test may fail"
     NFS_EXPORT=""
@@ -782,17 +924,24 @@ if [ "$SKIP_CLIENT" = "false" ]; then
             log "Test 6: Running NFS performance test..."
             NFS_SCRIPT="$SCRIPT_DIR/nfs-performance-test.sh"
 
-            if [ -z "$NFS_EXPORT" ]; then
-                warn "No NFS export path available - skipping NFS performance test"
+            # Get NFS test shares from terraform output
+            NFS_TEST_SHARES=$(cd "$TF_DIR" && terraform output -json nfs_test_shares 2>/dev/null | jq -r '.[]' 2>/dev/null | tr '\n' ' ' || echo "")
+
+            if [ -z "$NFS_TEST_SHARES" ]; then
+                # Fallback to exportfs if terraform output not available
+                NFS_TEST_SHARES="${NFS_SERVER}:${NFS_EXPORT}"
+            fi
+
+            if [ -z "$NFS_TEST_SHARES" ] || [ "$NFS_TEST_SHARES" = " " ]; then
+                warn "No NFS shares available - skipping NFS performance test"
             elif [ -f "$NFS_SCRIPT" ]; then
                 # Copy test script to client
                 log "Uploading test script to client..."
                 cat "$NFS_SCRIPT" | $CLIENT_SSH "cat > /tmp/nfs-test.sh && chmod +x /tmp/nfs-test.sh"
 
-                # Run NFS performance test (output to screen + log)
-                log "Testing NFS share: ${NFS_SERVER}:${NFS_EXPORT}"
+                log "Testing NFS shares: $NFS_TEST_SHARES"
                 echo ""
-                $CLIENT_SSH "sudo /tmp/nfs-test.sh --runtime 30 ${NFS_SERVER}:${NFS_EXPORT}" 2>&1 | tee "$RESULTS_DIR/nfs_performance.log"
+                $CLIENT_SSH "sudo /tmp/nfs-test.sh --runtime 30 ${NFS_TEST_SHARES}" 2>&1 | tee "$RESULTS_DIR/nfs_performance.log"
                 echo ""
 
                 if [ ${PIPESTATUS[0]} -eq 0 ]; then

@@ -84,10 +84,12 @@ USE_SPOT="false"
 # Performance policy to machine type mapping
 # GCP: n2-highcpu instances with local SSDs
 declare -A GCP_POLICIES=(
+    ["zonal-basic-performance"]="n2-highcpu-4"
     ["zonal-standard-performance"]="n2-highcpu-8"
     ["zonal-medium-performance"]="n2-highcpu-16"
     ["zonal-high-performance"]="n2-highcpu-32"
     ["zonal-ultra-performance"]="n2-highcpu-64"
+    ["regional-basic-performance"]="n2-highcpu-4"
     ["regional-standard-performance"]="n2-highcpu-8"
     ["regional-medium-performance"]="n2-highcpu-16"
     ["regional-high-performance"]="n2-highcpu-32"
@@ -124,6 +126,8 @@ declare -A AZURE_POLICIES=(
 
 # Expected IOPS targets (80% of peak for SLA margin)
 declare -A GCP_TARGETS=(
+    ["zonal-basic-performance_write"]="55000"
+    ["zonal-basic-performance_read"]="190000"
     ["zonal-standard-performance_write"]="110000"
     ["zonal-standard-performance_read"]="380000"
     ["zonal-medium-performance_write"]="175000"
@@ -132,6 +136,8 @@ declare -A GCP_TARGETS=(
     ["zonal-high-performance_read"]="900000"
     ["zonal-ultra-performance_write"]="585000"
     ["zonal-ultra-performance_read"]="1130000"
+    ["regional-basic-performance_write"]="50000"
+    ["regional-basic-performance_read"]="170000"
     ["regional-standard-performance_write"]="99000"
     ["regional-standard-performance_read"]="340000"
     ["regional-medium-performance_write"]="157500"
@@ -330,15 +336,10 @@ if [ -z "$CLOUD" ]; then
 fi
 
 # Validate policy
-VALID_POLICIES="zonal-standard-performance zonal-medium-performance zonal-high-performance zonal-ultra-performance regional-standard-performance regional-medium-performance regional-high-performance regional-ultra-performance"
+VALID_POLICIES="zonal-basic-performance zonal-standard-performance zonal-medium-performance zonal-high-performance zonal-ultra-performance regional-basic-performance regional-standard-performance regional-medium-performance regional-high-performance regional-ultra-performance"
 if [[ ! " $VALID_POLICIES " =~ " $POLICY " ]]; then
-    # AWS also supports basic tier
-    if [[ "$CLOUD" =~ ^(aws|azure)$ ]] && [[ "$POLICY" =~ basic ]]; then
-        : # OK - AWS and Azure support basic tier
-    else
-        fail "Invalid policy: $POLICY"
-        exit 1
-    fi
+    fail "Invalid policy: $POLICY"
+    exit 1
 fi
 
 # Determine deployment type from policy
@@ -551,6 +552,8 @@ performance_policy = "$POLICY"
 zone = "$ZONE"
 machine_type = "$RESOLVED_MACHINE_TYPE"
 use_spot_vms = $USE_SPOT
+source_image_project = "zettalane-dev"
+source_image = "mayascale19-osimage-20260125"
 EOF
             # Reserve client slot in placement policy for colocation
             if [ "$ENABLE_COLOCATION" = "true" ]; then
@@ -565,6 +568,7 @@ cluster_name = "$DEPLOYMENT_NAME"
 performance_policy = "$POLICY"
 instance_type_override = "$RESOLVED_MACHINE_TYPE"
 use_spot_instances = $USE_SPOT
+ami_id = "ami-0a37d6b99305b6746"
 ssh_cidr_blocks = ["0.0.0.0/0"]
 availability_zone = "$AWS_AZ"
 EOF
@@ -578,6 +582,7 @@ cluster_name = "$DEPLOYMENT_NAME"
 location = "$LOCATION"
 performance_policy = "$POLICY"
 use_spot_instances = $USE_SPOT
+vm_image_id = "/subscriptions/a1374ce4-3087-440a-9af3-674d883c6d3f/resourceGroups/zettalane-dev/providers/Microsoft.Compute/galleries/zettalaneDev/images/mayascale19/versions/1.9.20251215"
 $([ -n "$SSH_PUBLIC_KEY" ] && echo "ssh_public_key = \"$SSH_PUBLIC_KEY\"")
 EOF
             if [ -n "$RESOURCE_GROUP" ]; then
@@ -934,9 +939,19 @@ if [ "$SKIP_CLIENT" = "false" ]; then
         cd "$TF_DIR"
         log "Client ready: $CLIENT_IP (${CLIENT_MACHINE_TYPE})"
     elif [ -f "$CLIENT_DIR/terraform.tfstate" ]; then
-        # Reuse existing client - get machine type from tfvars
-        if [ -z "$CLIENT_MACHINE_TYPE" ] && [ -f "$CLIENT_DIR/terraform.tfvars" ]; then
-            CLIENT_MACHINE_TYPE=$(grep -E "machine_type|instance_type|vm_size" "$CLIENT_DIR/terraform.tfvars" 2>/dev/null | head -1 | cut -d'"' -f2)
+        # Reuse existing client - check if machine type override requested
+        CURRENT_MACHINE_TYPE=$(grep -E "machine_type|instance_type|vm_size" "$CLIENT_DIR/terraform.tfvars" 2>/dev/null | head -1 | cut -d'"' -f2)
+        if [ -n "$CLIENT_MACHINE_TYPE" ] && [ "$CLIENT_MACHINE_TYPE" != "$CURRENT_MACHINE_TYPE" ]; then
+            log "Resizing client from $CURRENT_MACHINE_TYPE to $CLIENT_MACHINE_TYPE..."
+            # Update tfvars with new machine type
+            case "$CLOUD" in
+                gcp) sed -i "s/machine_type = .*/machine_type = \"$CLIENT_MACHINE_TYPE\"/" "$CLIENT_DIR/terraform.tfvars" ;;
+                aws) sed -i "s/instance_type = .*/instance_type = \"$CLIENT_MACHINE_TYPE\"/" "$CLIENT_DIR/terraform.tfvars" ;;
+                azure) sed -i "s/vm_size = .*/vm_size = \"$CLIENT_MACHINE_TYPE\"/" "$CLIENT_DIR/terraform.tfvars" ;;
+            esac
+            (cd "$CLIENT_DIR" && terraform apply -auto-approve > "$RESULTS_DIR/client_resize.log" 2>&1) || warn "Client resize failed - see $RESULTS_DIR/client_resize.log"
+        elif [ -z "$CLIENT_MACHINE_TYPE" ]; then
+            CLIENT_MACHINE_TYPE="$CURRENT_MACHINE_TYPE"
         fi
         cd "$CLIENT_DIR"
         CLIENT_IP=$(terraform output -raw client_public_ip 2>/dev/null)

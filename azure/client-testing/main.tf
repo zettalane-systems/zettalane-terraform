@@ -29,9 +29,10 @@ resource "azurerm_public_ip" "client" {
 }
 
 resource "azurerm_network_interface" "client" {
-  name                = "${var.client_name}-nic"
-  location            = data.azurerm_resource_group.main.location
-  resource_group_name = var.resource_group_name
+  name                           = "${var.client_name}-nic"
+  location                       = data.azurerm_resource_group.main.location
+  resource_group_name            = var.resource_group_name
+  accelerated_networking_enabled = true
 
   ip_configuration {
     name                          = "internal"

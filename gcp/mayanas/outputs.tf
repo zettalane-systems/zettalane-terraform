@@ -62,6 +62,17 @@ output "vip_address_2" {
   value       = var.deployment_type == "active-active" ? local.vip_node2_address : null
 }
 
+# NFS test paths for validation scripts
+output "nfs_test_shares" {
+  description = "NFS share paths for automated testing"
+  value = var.deployment_type == "active-active" ? [
+    "${local.vip_node1_address}:/${var.cluster_name}-pool-node1/${length(var.shares) > 0 ? var.shares[0].name : "share1"}",
+    "${local.vip_node2_address}:/${var.cluster_name}-pool-node2/${length(var.shares) > 0 ? var.shares[0].name : "share1"}"
+  ] : [
+    "${var.deployment_type == "single" ? google_compute_instance.mayanas_node1.network_interface[0].network_ip : local.vip_node1_address}:/${var.cluster_name}-pool/${length(var.shares) > 0 ? var.shares[0].name : "share1"}"
+  ]
+}
+
 output "alias_ip_range" {
   description = "Alias IP range for VIP"
   value       = local.vip_cidr_range
