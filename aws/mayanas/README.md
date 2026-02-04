@@ -28,7 +28,7 @@ MayaNAS provides high-performance NFS storage with:
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/zettalane-systems/terraform.git
+   git clone https://github.com/zettalane-systems/zettalane-terraform.git
    cd terraform/aws/mayanas
    ```
 
@@ -141,8 +141,8 @@ terraform destroy
 
 ## Support
 
-- Documentation: https://docs.zettalane.com
-- Issues: https://github.com/zettalane-systems/terraform/issues
+- Documentation: https://zettalane.com
+- Issues: https://github.com/zettalane-systems/zettalane-terraform/issues
 - Email: support@zettalane.com
 
 ## License

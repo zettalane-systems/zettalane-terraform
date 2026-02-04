@@ -485,9 +485,6 @@ bucket_count = $BUCKET_COUNT
 use_spot_vms = $USE_SPOT
 force_destroy_buckets = true
 
-# TODO: REMOVE BEFORE COMMIT - devel image for testing
-source_image_project = "zettalane-dev"
-source_image = "mayanas19-osimage-20260122"
 EOF
             ;;
         aws)
@@ -501,8 +498,6 @@ use_spot_instance = $USE_SPOT
 ssh_cidr_blocks = ["0.0.0.0/0"]
 force_destroy_buckets = true
 
-# TODO: REMOVE BEFORE COMMIT - devel image for testing
-ami_id = "ami-0fb9b36c5ccadb652"
 EOF
             if [ -n "$ZONE" ]; then
                 echo "availability_zone = \"$ZONE\"" >> terraform.tfvars
@@ -525,8 +520,6 @@ use_spot_instance = $USE_SPOT
 ssh_cidr_blocks = ["0.0.0.0/0"]
 $([ -n "$SSH_PUBLIC_KEY" ] && echo "ssh_public_key = \"$SSH_PUBLIC_KEY\"")
 
-# TODO: REMOVE BEFORE COMMIT - devel image for testing
-vm_image_id = "/subscriptions/a1374ce4-3087-440a-9af3-674d883c6d3f/resourceGroups/zettalane-dev/providers/Microsoft.Compute/galleries/zettalaneDev/images/mayanas19/versions/latest"
 
 # Performance test share configuration
 shares = [

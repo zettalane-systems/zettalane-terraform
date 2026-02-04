@@ -20,8 +20,9 @@ High-performance NVMe block storage for databases and AI workloads.
 
 | Cloud | Path | Status |
 |-------|------|--------|
-| GCP | [gcp/mayascale](./gcp/mayascale) | Coming soon |
-| AWS | [aws/mayascale](./aws/mayascale) | Coming soon |
+| GCP | [gcp/mayascale](./gcp/mayascale) | Available |
+| AWS | [aws/mayascale](./aws/mayascale) | Available |
+| Azure | [azure/mayascale](./azure/mayascale) | Available |
 
 ## Prerequisites
 
@@ -51,16 +52,21 @@ sudo apt-get update && sudo apt-get install terraform
 
 ```bash
 # Clone the repo
-git clone https://github.com/zettalane-systems/terraform.git
-cd terraform
+git clone https://github.com/zettalane-systems/zettalane-terraform.git
+cd zettalane-terraform
 
-# Deploy and validate with one command
+# MayaNAS - NFS storage
 ./validate-mayanas.sh --cloud gcp --project-id my-project --zone us-central1-a
+
+# MayaScale - NVMe block storage
+./validate-mayascale.sh --cloud gcp --project-id my-project --zone us-central1-a
 ```
 
-## Validation Script
+## Validation Scripts
 
-The validation script deploys MayaNAS storage + client VM, runs NFS tests:
+### MayaNAS (validate-mayanas.sh)
+
+Deploys MayaNAS storage + client VM, runs NFS tests:
 
 ```bash
 ./validate-mayanas.sh --cloud PROVIDER [OPTIONS]
@@ -84,9 +90,9 @@ AZURE OPTIONS:
 COMMON OPTIONS:
     -n, --name NAME           Deployment name (default: demo)
     --cluster TYPE            Cluster type: single, ha (default: single)
-    -t, --tier TIER           Performance tier: basic, standard, performance (default: standard)
+    -t, --tier TIER           Performance tier: basic, standard, performance, ultra (default: standard)
     -m, --machine-type TYPE   Override machine type (cloud-specific)
-    -b, --bucket-count COUNT  Number of cloud storage buckets (default: 1)
+    -b, --bucket-count COUNT  Number of cloud storage buckets (default: 1, use 8-10 for high throughput)
     --ssh-key PATH            SSH public key file (default: ~/.ssh/id_rsa.pub)
     --spot                    Use spot/preemptible instances (default)
     --no-spot                 Use on-demand instances
@@ -106,27 +112,61 @@ COMMON OPTIONS:
 
 | Tier | GCP | AWS | Azure |
 |------|-----|-----|-------|
-| basic | n2-standard-4 | c6in.xlarge | Standard_D4s_v3 |
-| standard | n2-standard-8 | c6in.2xlarge | Standard_D8s_v3 |
-| performance | n2-standard-16 | c6in.4xlarge | Standard_D16s_v3 |
+| basic | n2-standard-4 | c6in.xlarge | Standard_D4s_v5 |
+| standard | n2-standard-8 | c6in.2xlarge | Standard_D8s_v5 |
+| performance | n2-standard-16 | c6in.4xlarge | Standard_D16s_v5 |
+| ultra | n2-standard-32 | c6in.8xlarge | Standard_D32s_v5 |
+
+### Performance Tuning
+
+**Bucket Count (`-b`)**: MayaNAS stripes data across cloud object storage buckets. More buckets = higher aggregate throughput.
+
+| Workload | Recommended Buckets |
+|----------|---------------------|
+| Development/test | 1 (default) |
+| Production | 4-6 |
+| High throughput (performance/ultra tier) | 8-10 |
+
+For maximum throughput, use `-t ultra -b 10` or `-t performance -b 8`.
+
+### SSH Access
+
+**SSH Key**: Provide your public key with `--ssh-key PATH` (default: `~/.ssh/id_rsa.pub`).
+
+**SSH Usernames by Cloud:**
+
+| Cloud | MayaNAS | MayaScale |
+|-------|---------|-----------|
+| GCP | `mayanas` | `mayascale` |
+| AWS | `ec2-user` | `ec2-user` |
+| Azure | `azureuser` | `azureuser` |
+
+**Connect to storage node:**
+```bash
+# Get IP from terraform output
+cd gcp/mayanas && terraform output storage_ip
+
+# SSH to storage
+ssh mayanas@<storage_ip>
+```
 
 ### Examples
 
 ```bash
-# GCP with standard tier
+# GCP - standard tier (quick test)
 ./validate-mayanas.sh --cloud gcp --project-id my-project --zone us-central1-a
 
-# AWS with performance tier
-./validate-mayanas.sh --cloud aws --key-pair my-keypair --tier performance
+# GCP - high performance (production workloads)
+./validate-mayanas.sh --cloud gcp --project-id my-project --zone us-central1-a -t performance -b 8
 
-# Azure with custom machine type
-./validate-mayanas.sh --cloud azure --resource-group mayanas-rg --location eastus -m Standard_D32s_v3
+# GCP - HA cluster with ultra tier (maximum throughput)
+./validate-mayanas.sh --cloud gcp --project-id my-project --zone us-central1-a --cluster ha -t ultra -b 10
 
-# GCP with HA cluster
-./validate-mayanas.sh --cloud gcp --project-id my-project --zone us-central1-a --cluster ha
+# AWS - performance tier
+./validate-mayanas.sh --cloud aws --key-pair my-keypair -t performance -b 8
 
-# GCP with multiple buckets
-./validate-mayanas.sh --cloud gcp --project-id my-project --zone us-central1-a -b 4
+# Azure - standard deployment
+./validate-mayanas.sh --cloud azure --resource-group mayanas-rg --location eastus
 
 # Destroy all resources
 ./validate-mayanas.sh --cloud gcp --project-id my-project -d
@@ -136,6 +176,18 @@ COMMON OPTIONS:
 
 Run the script again to rerun tests on existing deployment (automatically detected).
 Run with `-d` to destroy first, then run again for a fresh deployment.
+
+### MayaScale (validate-mayascale.sh)
+
+Deploys MayaScale NVMe-oF storage + client VM, runs block storage tests:
+
+```bash
+./validate-mayascale.sh --cloud gcp --project-id my-project --zone us-central1-a
+./validate-mayascale.sh --cloud aws --key-pair my-keypair
+./validate-mayascale.sh --cloud azure --resource-group mayascale-rg --location eastus
+```
+
+Options are similar to validate-mayanas.sh. Run `./validate-mayascale.sh --help` for details.
 
 ## Manual Deployment
 
@@ -160,8 +212,8 @@ See each cloud's marketplace listing for current pricing.
 
 ## Support
 
-- Documentation: https://docs.zettalane.com
-- Issues: https://github.com/zettalane-systems/terraform/issues
+- Documentation: https://zettalane.com
+- Issues: https://github.com/zettalane-systems/zettalane-terraform/issues
 - Email: support@zettalane.com
 
 ## License
