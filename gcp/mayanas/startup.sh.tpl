@@ -342,7 +342,17 @@ export MAYANAS_RESOURCE_ID="${resource_id}"
 %{ endif ~}
 export MAYANAS_BUCKET_NAMES="${bucket_names}"
 export MAYANAS_BUCKET_COUNT="${bucket_count}"
+export MAYANAS_BUCKET_BLOCKSIZE="${blocksize}"
 export MAYANAS_METADATA_DISK_NAMES="${metadata_disk_names}"
+%{ if enable_lustre ~}
+
+# Lustre protocol configuration
+export MAYANAS_ENABLE_LUSTRE="true"
+export MAYANAS_LUSTRE_FSNAME="${lustre_fsname}"
+export MAYANAS_LUSTRE_DOM_THRESHOLD="${lustre_dom_threshold}"
+export MAYANAS_LUSTRE_MDT_DISK="${lustre_mdt_disk_names}"
+export MAYANAS_LUSTRE_MDT_BACKEND="${lustre_mdt_backend}"
+%{ endif ~}
 
 # Set environment variables expected by MayaNAS setup scripts
 export MAYANAS_S3_BUCKET="${bucket_names}"
@@ -397,7 +407,17 @@ export MAYANAS_RESOURCE_ID="${resource_id}"
 %{ endif ~}
 export MAYANAS_BUCKET_NAMES="${bucket_names}"
 export MAYANAS_BUCKET_COUNT="${bucket_count}"
+export MAYANAS_BUCKET_BLOCKSIZE="${blocksize}"
 export MAYANAS_METADATA_DISK_NAMES="${metadata_disk_names}"
+%{ if enable_lustre ~}
+
+# Lustre protocol configuration
+export MAYANAS_ENABLE_LUSTRE="true"
+export MAYANAS_LUSTRE_FSNAME="${lustre_fsname}"
+export MAYANAS_LUSTRE_DOM_THRESHOLD="${lustre_dom_threshold}"
+export MAYANAS_LUSTRE_MDT_DISK="${lustre_mdt_disk_names}"
+export MAYANAS_LUSTRE_MDT_BACKEND="${lustre_mdt_backend}"
+%{ endif ~}
 
 # MayaNAS-expected environment variables
 export MAYANAS_S3_BUCKET="${bucket_names}"
