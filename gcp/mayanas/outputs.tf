@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # Cluster Information
 output "cluster_name" {
   description = "Name of the MayaNAS cluster"

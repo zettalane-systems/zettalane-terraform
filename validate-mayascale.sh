@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 #
 # MayaScale Validation Script
 # Deploys MayaScale NVMe-oF storage + client, runs performance tests, validates installation

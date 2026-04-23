@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # Project and Region Configuration
 variable "project_id" {
   description = "The GCP project ID"

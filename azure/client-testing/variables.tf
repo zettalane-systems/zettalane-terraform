@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # Azure Client Testing - Variables
 
 variable "subscription_id" {

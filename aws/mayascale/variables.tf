@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # AWS MayaScale Terraform Module - Variables
 # Performance-tier based deployment for AWS EC2 with instance storage (i3, i3en, i4i families)
 

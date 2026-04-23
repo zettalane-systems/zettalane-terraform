@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 
 # MayaNAS NFS Client Performance Test
 # Runs on client VM to test NFS share performance

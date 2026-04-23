@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # Configure the Azure Provider
 provider "azurerm" {
   subscription_id = var.subscription_id

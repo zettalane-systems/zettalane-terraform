@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 
 # MayaScale FSx/ZFS Mirror Performance Test
 # Tests NFS over ZFS mirrors or local ZFS performance

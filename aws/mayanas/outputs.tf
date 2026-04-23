@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # Standard outputs (consistent across all clouds)
 output "node1_public_ip" {
   description = "Public IP of node 1"

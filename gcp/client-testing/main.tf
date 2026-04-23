@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # GCP Client Testing Module - Ubuntu Client for NFS Testing
 
 provider "google" {

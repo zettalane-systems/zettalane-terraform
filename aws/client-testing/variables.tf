@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # AWS Client Testing - Variables
 
 variable "key_pair_name" {

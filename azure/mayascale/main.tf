@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # Azure MayaScale Terraform Configuration
 # NVMeoF storage cluster with local ephemeral NVMe
 

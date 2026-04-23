@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 #
 # MayaNAS Validation Script
 # Deploys MayaNAS storage + client, runs NFS tests, validates installation

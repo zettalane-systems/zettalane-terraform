@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 
 # MayaScale FIO Performance Test Script
 # Comprehensive performance testing for NVMe-oF volumes with multiple workload patterns

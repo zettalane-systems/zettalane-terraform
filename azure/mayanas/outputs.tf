@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # Virtual Machine Information
 output "vm_ids" {
   description = "IDs of the MayaNAS virtual machines"

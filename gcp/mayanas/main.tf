@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # Configure the Google Cloud Provider
 provider "google" {
   project = var.project_id

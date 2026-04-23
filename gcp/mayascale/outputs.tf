@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # MayaScale GCP Marketplace Outputs
 
 # Cluster Information

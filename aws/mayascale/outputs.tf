@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # AWS MayaScale Terraform Module - Outputs
 
 # Deployment Summary

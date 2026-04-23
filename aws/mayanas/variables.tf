@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # Image Configuration
 variable "ami_id" {
   description = "MayaNAS AMI ID (optional - will auto-detect marketplace AMI if not specified)"

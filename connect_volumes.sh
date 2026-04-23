@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 
 # MayaScale Volume Connection Script
 # Connects client to MayaScale storage volumes via NVMe-oF (TCP or RDMA)

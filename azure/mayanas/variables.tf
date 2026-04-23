@@ -1,3 +1,6 @@
+# Copyright (c) 2026 ZettaLane Systems, LLC.
+# All Rights Reserved.
+
 # Required Variables
 variable "vm_image_id" {
   description = "MayaNAS VM Image ID for deployment (auto-detected by region if empty)"
