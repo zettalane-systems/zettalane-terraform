@@ -30,6 +30,10 @@ override.tf.json
 id_rsa
 id_rsa.pub
 
+# Test result directories
+mayanas-results/
+mayascale-results/
+
 # OS files
 .DS_Store
 Thumbs.db
