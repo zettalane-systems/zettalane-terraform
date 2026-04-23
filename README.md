@@ -62,6 +62,9 @@ cd zettalane-terraform
 
 # MayaScale - NVMe block storage
 ./validate-mayascale.sh --cloud gcp --project-id my-project --zone us-central1-a
+
+# Unified Lustre Data Platform (2-node active-active, Lustre + NFS + SMB)
+./deploy-lustre.sh --cloud gcp -p my-project -z us-central1-a -n lustre-eval
 ```
 
 ## Validation Scripts
