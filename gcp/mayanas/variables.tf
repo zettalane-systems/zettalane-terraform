@@ -303,3 +303,49 @@ variable "boot_disk_type" {
   }
 }
 
+# Lustre Protocol Configuration
+variable "enable_lustre" {
+  description = "Enable Lustre protocol support. Adds MDT disk and configures Lustre on cluster_setup2.sh startup."
+  type        = bool
+  default     = false
+}
+
+variable "fsname" {
+  description = "Lustre filesystem name (max 8 chars, lowercase alphanumeric, must start with letter)"
+  type        = string
+  default     = "lustre"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9]{0,7}$", var.fsname))
+    error_message = "Lustre filesystem name must be 1-8 lowercase alphanumeric characters, starting with a letter."
+  }
+}
+
+variable "lustre_mdt_backend" {
+  description = "Filesystem backend for Lustre MDT. ldiskfs: in-place updates (lower latency, no COW overhead). zfs: COW with checksums (matches OST backend)."
+  type        = string
+  default     = "ldiskfs"
+
+  validation {
+    condition     = contains(["ldiskfs", "zfs"], var.lustre_mdt_backend)
+    error_message = "Lustre MDT backend must be 'ldiskfs' or 'zfs'."
+  }
+}
+
+variable "lustre_mdt_disk_size_gb" {
+  description = "Size of the Lustre MDT disk in GB (pd-ssd)"
+  type        = number
+  default     = 25
+}
+
+variable "dom_threshold" {
+  description = "Lustre Data-on-MDT threshold. Files smaller than this are stored on MDT (NVMe) instead of OST (GCS). Set to 0 to disable."
+  type        = string
+  default     = "64K"
+
+  validation {
+    condition     = contains(["0", "4K", "8K", "16K", "32K", "64K", "128K", "256K", "512K", "1M"], var.dom_threshold)
+    error_message = "DoM threshold must be one of: 0, 4K, 8K, 16K, 32K, 64K, 128K, 256K, 512K, 1M."
+  }
+}
+

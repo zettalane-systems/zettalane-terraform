@@ -372,6 +372,23 @@ resource "google_compute_region_disk" "mayanas_metadata_regional" {
   }
 }
 
+# Lustre MDT disk (pd-ssd for low-latency metadata operations)
+# MDT must be on NVMe/SSD — GCS round-trips kill metadata performance
+resource "google_compute_disk" "lustre_mdt" {
+  count = var.enable_lustre ? 1 : 0
+
+  name = "${var.cluster_name}-lustre-mdt-${local.resource_suffix}"
+  type = local.metadata_disk_type
+  zone = local.node1_zone
+  size = var.lustre_mdt_disk_size_gb
+
+  labels = {
+    environment = var.environment
+    cluster     = var.cluster_name
+    purpose     = "lustre-mdt"
+  }
+}
+
 # Note: We use the existing default subnet and configure alias IP ranges on instances
 # No need to create a new subnetwork - GCP will handle alias IP ranges automatically
 
@@ -478,6 +495,11 @@ data "template_file" "startup_script_node1" {
     bucket_count        = var.bucket_count
     blocksize           = var.blocksize
     subnet_cidr         = data.google_compute_subnetwork.default.ip_cidr_range
+    enable_lustre        = var.enable_lustre
+    lustre_fsname        = var.fsname
+    lustre_dom_threshold = var.dom_threshold
+    lustre_mdt_disk_names = var.enable_lustre ? join(" ", [for disk in google_compute_disk.lustre_mdt : disk.name]) : ""
+    lustre_mdt_backend    = var.lustre_mdt_backend
   }
 }
 
@@ -509,6 +531,16 @@ resource "google_compute_instance" "mayanas_node1" {
     content {
       source      = var.multi_zone ? google_compute_region_disk.mayanas_metadata_regional[attached_disk.key].id : google_compute_disk.mayanas_metadata_zonal[attached_disk.key].id
       device_name = var.multi_zone ? google_compute_region_disk.mayanas_metadata_regional[attached_disk.key].name : google_compute_disk.mayanas_metadata_zonal[attached_disk.key].name
+      mode        = "READ_WRITE"
+    }
+  }
+
+  # Attach Lustre MDT disk to node1 (when enable_lustre = true)
+  dynamic "attached_disk" {
+    for_each = var.enable_lustre ? [1] : []
+    content {
+      source      = google_compute_disk.lustre_mdt[0].id
+      device_name = google_compute_disk.lustre_mdt[0].name
       mode        = "READ_WRITE"
     }
   }

@@ -279,3 +279,19 @@ output "deployment_summary" {
 
     EOT
 }
+
+# Lustre Protocol Information
+output "lustre_mount_command" {
+  description = "Command to mount Lustre filesystem from client"
+  value       = var.enable_lustre ? "mount -t lustre ${var.deployment_type == "single" ? google_compute_instance.mayanas_node1.network_interface[0].network_ip : local.vip_node1_address}@tcp:/${var.fsname} /mnt/lustre" : null
+}
+
+output "lustre_fsname" {
+  description = "Lustre filesystem name"
+  value       = var.enable_lustre ? var.fsname : null
+}
+
+output "lustre_mgs_nid" {
+  description = "Lustre MGS NID (VIP for HA, internal IP for single node)"
+  value       = var.enable_lustre ? "${var.deployment_type == "single" ? google_compute_instance.mayanas_node1.network_interface[0].network_ip : local.vip_node1_address}@tcp" : null
+}
