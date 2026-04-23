@@ -23,6 +23,9 @@ performance_policy = "zonal-medium-performance"
 # Use spot instances for 50-70% cost savings (may be interrupted)
 use_spot_instances = true
 
+# Assign public IPs to storage nodes (default: false for private-only deployment)
+# assign_public_ip = true  # Set true for evaluation/testing (default: false)
+
 # Optional: Specific availability zone (auto-selected if not specified)
 # availability_zone = "us-east-1a"
 

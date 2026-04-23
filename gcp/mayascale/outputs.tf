@@ -24,7 +24,7 @@ output "deployment_summary" {
 # Node Information - Flat outputs for script compatibility
 output "node1_public_ip" {
   description = "Public IP of node 1"
-  value       = google_compute_instance.mayascale_nodes[0].network_interface[0].access_config[0].nat_ip
+  value       = var.assign_public_ip ? google_compute_instance.mayascale_nodes[0].network_interface[0].access_config[0].nat_ip : null
 }
 
 output "node1_private_ip" {
@@ -39,7 +39,7 @@ output "node1_name" {
 
 output "node2_public_ip" {
   description = "Public IP of node 2"
-  value       = google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip
+  value       = var.assign_public_ip ? google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip : null
 }
 
 output "node2_private_ip" {
@@ -70,7 +70,7 @@ output "primary_node" {
     zone        = google_compute_instance.mayascale_nodes[0].zone
     internal_ip = google_compute_instance.mayascale_nodes[0].network_interface[0].network_ip
     backend_ip  = google_compute_instance.mayascale_nodes[0].network_interface[1].network_ip
-    external_ip = google_compute_instance.mayascale_nodes[0].network_interface[0].access_config[0].nat_ip
+    external_ip = var.assign_public_ip ? google_compute_instance.mayascale_nodes[0].network_interface[0].access_config[0].nat_ip : null
     instance_id = google_compute_instance.mayascale_nodes[0].instance_id
   }
 }
@@ -82,7 +82,7 @@ output "secondary_node" {
     zone        = google_compute_instance.mayascale_nodes[1].zone
     internal_ip = google_compute_instance.mayascale_nodes[1].network_interface[0].network_ip
     backend_ip  = google_compute_instance.mayascale_nodes[1].network_interface[1].network_ip
-    external_ip = google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip
+    external_ip = var.assign_public_ip ? google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip : null
     instance_id = google_compute_instance.mayascale_nodes[1].instance_id
   }
 }
@@ -148,9 +148,9 @@ output "client_discovery_info" {
 output "management_urls" {
   description = "Management interface URLs"
   value = {
-    primary_web_ui = "http://${google_compute_instance.mayascale_nodes[0].network_interface[0].access_config[0].nat_ip}:2020"
-    secondary_web_ui = "http://${google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip}:2020"
-    cluster_metrics = "http://${local.vip_address}:9090"
+    primary_web_ui   = var.assign_public_ip ? "http://${google_compute_instance.mayascale_nodes[0].network_interface[0].access_config[0].nat_ip}:2020" : "Use SSH tunnel: gcloud compute ssh ... -- -L 2020:localhost:2020"
+    secondary_web_ui = var.assign_public_ip ? "http://${google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip}:2020" : "Use SSH tunnel: gcloud compute ssh ... -- -L 2021:localhost:2020"
+    cluster_metrics  = "http://${local.vip_address}:9090"
   }
 }
 
@@ -158,8 +158,8 @@ output "management_urls" {
 output "ssh_commands" {
   description = "SSH commands to connect to nodes"
   value = {
-    primary_node   = "ssh mayascale@${google_compute_instance.mayascale_nodes[0].network_interface[0].access_config[0].nat_ip}"
-    secondary_node = "ssh mayascale@${google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip}"
+    primary_node   = var.assign_public_ip ? "ssh mayascale@${google_compute_instance.mayascale_nodes[0].network_interface[0].access_config[0].nat_ip}" : "gcloud compute ssh mayascale@${google_compute_instance.mayascale_nodes[0].name} --zone=${google_compute_instance.mayascale_nodes[0].zone} --project=${var.project_id}"
+    secondary_node = var.assign_public_ip ? "ssh mayascale@${google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip}" : "gcloud compute ssh mayascale@${google_compute_instance.mayascale_nodes[1].name} --zone=${google_compute_instance.mayascale_nodes[1].zone} --project=${var.project_id}"
   }
 }
 
@@ -276,11 +276,11 @@ output "deployment_info" {
     machine_type        = local.selected_machine_type
     node1_name          = google_compute_instance.mayascale_nodes[0].name
     node1_zone          = google_compute_instance.mayascale_nodes[0].zone
-    node1_external_ip   = google_compute_instance.mayascale_nodes[0].network_interface[0].access_config[0].nat_ip
+    node1_external_ip   = var.assign_public_ip ? google_compute_instance.mayascale_nodes[0].network_interface[0].access_config[0].nat_ip : null
     node1_internal_ip   = google_compute_instance.mayascale_nodes[0].network_interface[0].network_ip
     node2_name          = google_compute_instance.mayascale_nodes[1].name
     node2_zone          = google_compute_instance.mayascale_nodes[1].zone
-    node2_external_ip   = google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip
+    node2_external_ip   = var.assign_public_ip ? google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip : null
     node2_internal_ip   = google_compute_instance.mayascale_nodes[1].network_interface[0].network_ip
     vip_primary         = local.vip_address
     vip_secondary       = local.vip_address_2

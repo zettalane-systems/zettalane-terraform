@@ -2,6 +2,8 @@
 
 Terraform modules for deploying ZettaLane storage solutions on public clouds.
 
+[![Demo Video](https://img.shields.io/badge/Demo-YouTube-red)](https://youtu.be/skYywjF4w3A)
+
 ## Products
 
 ### MayaNAS

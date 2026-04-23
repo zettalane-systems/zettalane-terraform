@@ -435,7 +435,69 @@ if [ "$DESTROY_MODE" = "true" ]; then
         log "No terraform.tfstate found, nothing to destroy"
     fi
 
+    # After successful destroy, check for orphaned resources
     if [ "$STORAGE_DESTROY_OK" = true ]; then
+        log "Checking for orphaned resources..."
+        ORPHANS_FOUND=false
+        case "$CLOUD" in
+            gcp)
+                for type in instances firewall-rules; do
+                    ORPHANS=$(gcloud compute $type list --filter="name~^${DEPLOYMENT_NAME}" --format="value(name)" --project="$PROJECT_ID" 2>/dev/null || true)
+                    if [ -n "$ORPHANS" ]; then
+                        ORPHANS_FOUND=true
+                        echo "$ORPHANS" | while read -r name; do
+                            [ -n "$name" ] && log "Deleting orphaned $type: $name" && gcloud compute $type delete "$name" --project="$PROJECT_ID" --quiet 2>/dev/null || true
+                        done
+                    fi
+                done
+                # Subnets need region
+                gcloud compute networks subnets list --filter="name~^${DEPLOYMENT_NAME}" --format="value(name,region)" --project="$PROJECT_ID" 2>/dev/null | while read -r name region; do
+                    ORPHANS_FOUND=true
+                    [ -n "$name" ] && log "Deleting orphaned subnet: $name" && gcloud compute networks subnets delete "$name" --region="$region" --project="$PROJECT_ID" --quiet 2>/dev/null || true
+                done
+                # Networks
+                gcloud compute networks list --filter="name~^${DEPLOYMENT_NAME}" --format="value(name)" --project="$PROJECT_ID" 2>/dev/null | while read -r name; do
+                    ORPHANS_FOUND=true
+                    [ -n "$name" ] && log "Deleting orphaned network: $name" && gcloud compute networks delete "$name" --project="$PROJECT_ID" --quiet 2>/dev/null || true
+                done
+                # Service accounts
+                gcloud iam service-accounts list --filter="email~^${DEPLOYMENT_NAME}" --format="value(email)" --project="$PROJECT_ID" 2>/dev/null | while read -r email; do
+                    ORPHANS_FOUND=true
+                    [ -n "$email" ] && log "Deleting orphaned SA: $email" && gcloud iam service-accounts delete "$email" --project="$PROJECT_ID" --quiet 2>/dev/null || true
+                done
+                # Buckets
+                gsutil ls 2>/dev/null | grep "${DEPLOYMENT_NAME}" | while read -r bucket; do
+                    ORPHANS_FOUND=true
+                    log "Deleting orphaned bucket: $bucket"
+                    gsutil -m rm -r "$bucket" 2>/dev/null || true
+                done
+                ;;
+            aws)
+                # Check for leftover instances
+                ORPHANS=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=*${DEPLOYMENT_NAME}*" "Name=instance-state-name,Values=running,stopped" --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || true)
+                if [ -n "$ORPHANS" ] && [ "$ORPHANS" != "None" ]; then
+                    ORPHANS_FOUND=true
+                    warn "Orphaned EC2 instances found: $ORPHANS"
+                fi
+                # Check for leftover S3 buckets
+                aws s3 ls 2>/dev/null | grep "${DEPLOYMENT_NAME}" | awk '{print $3}' | while read -r bucket; do
+                    ORPHANS_FOUND=true
+                    log "Deleting orphaned bucket: s3://$bucket"
+                    aws s3 rm "s3://$bucket" --recursive 2>/dev/null && aws s3 rb "s3://$bucket" --force 2>/dev/null || true
+                done
+                ;;
+            azure)
+                # Check for leftover VMs in resource group
+                ORPHANS=$(az vm list -g "$RESOURCE_GROUP" --query "[?contains(name, '${DEPLOYMENT_NAME}')].name" -o tsv 2>/dev/null || true)
+                if [ -n "$ORPHANS" ]; then
+                    ORPHANS_FOUND=true
+                    warn "Orphaned Azure VMs found: $ORPHANS"
+                fi
+                ;;
+        esac
+        if [ "$ORPHANS_FOUND" = true ]; then
+            warn "Orphaned resources were found and cleanup attempted - verify manually"
+        fi
         success "Cleanup complete"
     else
         fail "Cleanup incomplete - check logs and retry"
@@ -484,7 +546,11 @@ machine_type = "$RESOLVED_MACHINE_TYPE"
 bucket_count = $BUCKET_COUNT
 use_spot_vms = $USE_SPOT
 force_destroy_buckets = true
+mayanas_startup_wait = 15
 
+# TODO: REMOVE BEFORE COMMIT - devel image for testing
+source_image_project = "zettalane-dev"
+source_image = "mayanas19-osimage-20260122"
 EOF
             ;;
         aws)
@@ -498,6 +564,8 @@ use_spot_instance = $USE_SPOT
 ssh_cidr_blocks = ["0.0.0.0/0"]
 force_destroy_buckets = true
 
+# TODO: REMOVE BEFORE COMMIT - devel image for testing
+ami_id = "ami-0fb9b36c5ccadb652"
 EOF
             if [ -n "$ZONE" ]; then
                 echo "availability_zone = \"$ZONE\"" >> terraform.tfvars
@@ -520,6 +588,8 @@ use_spot_instance = $USE_SPOT
 ssh_cidr_blocks = ["0.0.0.0/0"]
 $([ -n "$SSH_PUBLIC_KEY" ] && echo "ssh_public_key = \"$SSH_PUBLIC_KEY\"")
 
+# TODO: REMOVE BEFORE COMMIT - devel image for testing
+vm_image_id = "/subscriptions/a1374ce4-3087-440a-9af3-674d883c6d3f/resourceGroups/zettalane-dev/providers/Microsoft.Compute/galleries/zettalaneDev/images/mayanas19/versions/latest"
 
 # Performance test share configuration
 shares = [
@@ -627,16 +697,24 @@ case "$CLOUD" in
     gcp)
         NODE1_NAME=$(get_output node1_name)
         SSH_BASE="gcloud compute ssh mayanas@${NODE1_NAME} --zone=${ZONE} --project=${PROJECT_ID} --quiet --ssh-flag=-o --ssh-flag=StrictHostKeyChecking=no --ssh-flag=-o --ssh-flag=UserKnownHostsFile=/dev/null"
+        # Node2 SSH only for HA deployments
+        if [ -n "$NODE2_IP" ]; then
+            NODE2_NAME=$(get_output node2_name)
+            SSH_BASE_NODE2="gcloud compute ssh mayanas@${NODE2_NAME} --zone=${ZONE} --project=${PROJECT_ID} --quiet --ssh-flag=-o --ssh-flag=StrictHostKeyChecking=no --ssh-flag=-o --ssh-flag=UserKnownHostsFile=/dev/null"
+        fi
         ;;
     aws)
         if [ -f "$HOME/.ssh/${KEY_PAIR_NAME}.pem" ]; then
             SSH_BASE="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i $HOME/.ssh/${KEY_PAIR_NAME}.pem ${SSH_USER}@${NODE1_IP}"
+            [ -n "$NODE2_IP" ] && SSH_BASE_NODE2="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i $HOME/.ssh/${KEY_PAIR_NAME}.pem ${SSH_USER}@${NODE2_IP}"
         else
             SSH_BASE="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${NODE1_IP}"
+            [ -n "$NODE2_IP" ] && SSH_BASE_NODE2="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${NODE2_IP}"
         fi
         ;;
     azure)
         SSH_BASE="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${NODE1_IP}"
+        [ -n "$NODE2_IP" ] && SSH_BASE_NODE2="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${NODE2_IP}"
         VNET_NAME=$(get_output virtual_network_name)
         SUBNET_NAME=$(get_output subnet_name)
         AZURE_SUB_ID=$(az account show --query id -o tsv 2>/dev/null || echo "")
@@ -652,6 +730,18 @@ run_ssh() {
         $SSH_BASE --command "$1"
     else
         $SSH_BASE "$1"
+    fi
+}
+
+# SSH helper function for node2
+run_ssh_node2() {
+    if [ -z "$SSH_BASE_NODE2" ]; then
+        return 1
+    fi
+    if [ "$CLOUD" = "gcp" ]; then
+        $SSH_BASE_NODE2 --command "$1"
+    else
+        $SSH_BASE_NODE2 "$1"
     fi
 }
 
@@ -798,7 +888,7 @@ while [ $ELAPSED -lt $MAX_WAIT ]; do
             success "Node1 ready (pool: $POOL_NAME)"
             # For HA, also check node2
             if [ -n "$VIP2" ] && [ -n "$NODE2_IP" ]; then
-                NODE2_POOL=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 mayanas@${NODE2_IP} "sudo zpool list -H -o name 2>/dev/null | head -1" 2>/dev/null || echo "")
+                NODE2_POOL=$(run_ssh_node2 "sudo zpool list -H -o name 2>/dev/null | head -1" 2>/dev/null || echo "")
                 if [ -n "$NODE2_POOL" ]; then
                     success "Node2 ready (pool: $NODE2_POOL)"
                 else
@@ -831,7 +921,7 @@ if [ -n "$POOL_INFO" ]; then
     success "Node1 Pool: $POOL_NAME  Size: $POOL_SIZE  Free: $POOL_FREE  Health: $POOL_HEALTH"
     # For HA, also show node2 pool
     if [ -n "$VIP2" ] && [ -n "$NODE2_IP" ]; then
-        POOL2_INFO=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 mayanas@${NODE2_IP} "sudo zpool list -H 2>/dev/null | head -1" 2>/dev/null || echo "")
+        POOL2_INFO=$(run_ssh_node2 "sudo zpool list -H 2>/dev/null | head -1" 2>/dev/null || echo "")
         if [ -n "$POOL2_INFO" ]; then
             POOL2_NAME=$(echo "$POOL2_INFO" | awk '{print $1}')
             POOL2_SIZE=$(echo "$POOL2_INFO" | awk '{print $2}')
@@ -854,7 +944,7 @@ if [ -n "$EXPORTS" ]; then
     success "Node1 NFS exports: $EXPORT_COUNT configured (${NFS_EXPORT})"
     # For HA, also show node2 exports
     if [ -n "$VIP2" ] && [ -n "$NODE2_IP" ]; then
-        EXPORTS2=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 mayanas@${NODE2_IP} "sudo exportfs -v 2>/dev/null | head -5" 2>/dev/null || echo "")
+        EXPORTS2=$(run_ssh_node2 "sudo exportfs -v 2>/dev/null | head -5" 2>/dev/null || echo "")
         if [ -n "$EXPORTS2" ]; then
             EXPORT2_COUNT=$(echo "$EXPORTS2" | wc -l)
             FIRST_EXPORT2=$(echo "$EXPORTS2" | head -1 | awk '{print $1}')

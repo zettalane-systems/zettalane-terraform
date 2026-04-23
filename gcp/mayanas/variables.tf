@@ -266,6 +266,12 @@ variable "use_spot_vms" {
   default     = false
 }
 
+variable "assign_public_ip" {
+  description = "Assign public IPs to instances (set false for private-only deployment)"
+  type        = bool
+  default     = false
+}
+
 variable "boot_disk_type" {
   description = "Boot disk type for MayaNAS instances. Use 'auto' for automatic selection based on machine type (N4→hyperdisk-balanced, others→pd-balanced). Manual options: pd-standard, pd-balanced, pd-ssd, hyperdisk-balanced, hyperdisk-balanced-ha, hyperdisk-throughput"
   type        = string

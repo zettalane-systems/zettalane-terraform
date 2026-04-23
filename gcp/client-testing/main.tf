@@ -71,19 +71,4 @@ resource "google_compute_instance" "client" {
     }
   }
 
-  tags = ["mayanas-client"]
-}
-
-resource "google_compute_firewall" "client_ssh" {
-  name    = "${var.client_name}-ssh"
-  network = data.google_compute_network.default.name
-  project = var.project_id
-
-  allow {
-    protocol = "tcp"
-    ports    = ["22"]
-  }
-
-  source_ranges = ["0.0.0.0/0"]
-  target_tags   = ["mayanas-client"]
 }

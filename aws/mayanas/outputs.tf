@@ -1,7 +1,7 @@
 # Standard outputs (consistent across all clouds)
 output "node1_public_ip" {
   description = "Public IP of node 1"
-  value       = aws_instance.mayanas_primary.public_ip
+  value       = var.assign_public_ip ? aws_instance.mayanas_primary.public_ip : null
 }
 
 output "node1_private_ip" {
@@ -16,7 +16,7 @@ output "node1_name" {
 
 output "node2_public_ip" {
   description = "Public IP of node 2 (HA only)"
-  value       = local.is_ha_deployment ? aws_instance.mayanas_secondary[0].public_ip : null
+  value       = local.is_ha_deployment && var.assign_public_ip ? aws_instance.mayanas_secondary[0].public_ip : null
 }
 
 output "node2_private_ip" {
@@ -79,23 +79,23 @@ output "node_count" {
 # SSH Connection Commands
 output "ssh_command_primary" {
   description = "SSH command to connect to the primary instance"
-  value       = "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_primary.public_ip}"
+  value       = var.assign_public_ip ? "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_primary.public_ip}" : "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_primary.private_ip}"
 }
 
 output "ssh_command_secondary" {
   description = "SSH command to connect to the secondary instance (HA only)"
-  value       = local.is_ha_deployment ? "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_secondary[0].public_ip}" : null
+  value       = local.is_ha_deployment ? (var.assign_public_ip ? "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_secondary[0].public_ip}" : "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_secondary[0].private_ip}") : null
 }
 
 # Web UI Access
 output "web_ui_tunnel_primary" {
   description = "SSH tunnel command for Web UI access via primary node"
-  value       = "ssh -L 2020:localhost:2020 -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_primary.public_ip}"
+  value       = var.assign_public_ip ? "ssh -L 2020:localhost:2020 -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_primary.public_ip}" : "ssh -L 2020:localhost:2020 -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_primary.private_ip}"
 }
 
 output "web_ui_tunnel_secondary" {
   description = "SSH tunnel command for Web UI access via secondary node (HA only)"
-  value       = local.is_ha_deployment ? "ssh -L 2020:localhost:2020 -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_secondary[0].public_ip}" : null
+  value       = local.is_ha_deployment ? (var.assign_public_ip ? "ssh -L 2020:localhost:2020 -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_secondary[0].public_ip}" : "ssh -L 2020:localhost:2020 -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_secondary[0].private_ip}") : null
 }
 
 # Network Configuration
@@ -155,8 +155,8 @@ output "deployment_summary" {
     └─ Environment: ${var.environment}
     
     💻 INSTANCE DETAILS
-    ├─ Primary: ${aws_instance.mayanas_primary.id} (${aws_instance.mayanas_primary.public_ip})
-    ${local.is_ha_deployment ? "├─ Secondary: ${aws_instance.mayanas_secondary[0].id} (${aws_instance.mayanas_secondary[0].public_ip})" : ""}
+    ├─ Primary: ${aws_instance.mayanas_primary.id} (${aws_instance.mayanas_primary.private_ip}${var.assign_public_ip ? ", public: ${aws_instance.mayanas_primary.public_ip}" : ""})
+    ${local.is_ha_deployment ? "├─ Secondary: ${aws_instance.mayanas_secondary[0].id} (${aws_instance.mayanas_secondary[0].private_ip}${var.assign_public_ip ? ", public: ${aws_instance.mayanas_secondary[0].public_ip}" : ""})" : ""}
     └─ Instance Type: ${var.instance_type}
     
     🌐 NETWORK CONFIGURATION
@@ -174,9 +174,9 @@ output "deployment_summary" {
     └─ Versioning: ${var.enable_s3_versioning ? "Enabled" : "Disabled"}
     
     🔐 ACCESS METHODS
-    ├─ SSH Primary: ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_primary.public_ip}
-    ${local.is_ha_deployment ? "├─ SSH Secondary: ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_secondary[0].public_ip}" : ""}
-    ├─ Web UI Tunnel: ssh -L 2020:localhost:2020 -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayanas_primary.public_ip}
+    ├─ SSH Primary: ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${var.assign_public_ip ? aws_instance.mayanas_primary.public_ip : aws_instance.mayanas_primary.private_ip}
+    ${local.is_ha_deployment ? "├─ SSH Secondary: ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${var.assign_public_ip ? aws_instance.mayanas_secondary[0].public_ip : aws_instance.mayanas_secondary[0].private_ip}" : ""}
+    ├─ Web UI Tunnel: ssh -L 2020:localhost:2020 -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${var.assign_public_ip ? aws_instance.mayanas_primary.public_ip : aws_instance.mayanas_primary.private_ip}
     └─ Web UI Access: http://localhost:2020 (after tunnel is active)
     
     📝 NEXT STEPS

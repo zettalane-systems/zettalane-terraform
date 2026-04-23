@@ -26,6 +26,9 @@ instance_family = "laosv4"
 # Use spot VMs for cost savings (may be evicted)
 use_spot_vms = false
 
+# Assign public IPs to storage nodes (default: false for private-only deployment)
+# assign_public_ip = true  # Set true for evaluation/testing (default: false)
+
 # Optional: SSH public key for direct access
 # ssh_public_key = "ssh-rsa AAAAB... user@host"
 

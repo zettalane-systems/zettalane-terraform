@@ -650,10 +650,12 @@ resource "aws_instance" "mayanas_primary" {
     }
   }
   
+  associate_public_ip_address = var.assign_public_ip
+
   vpc_security_group_ids = [aws_security_group.mayanas_sg.id]
-  
+
   iam_instance_profile = var.use_iam_role ? aws_iam_instance_profile.mayanas_profile[0].name : null
-  
+
   user_data_base64 = base64encode(local.startup_script_primary)
   
   # No VIP pre-assignment - Heartbeat will manage VIPs via awsIP.resource
@@ -707,10 +709,12 @@ resource "aws_instance" "mayanas_secondary" {
     }
   }
   
+  associate_public_ip_address = var.assign_public_ip
+
   vpc_security_group_ids = [aws_security_group.mayanas_sg.id]
-  
+
   iam_instance_profile = var.use_iam_role ? aws_iam_instance_profile.mayanas_profile[0].name : null
-  
+
   # No startup script - primary instance handles cluster setup
   
   # No VIP pre-assignment - Heartbeat will manage VIPs via awsIP.resource

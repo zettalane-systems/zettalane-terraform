@@ -115,5 +115,8 @@ ssh_source_ranges = ["0.0.0.0/0"]
 # Enable multi-zone HA (regional disks, 2x disk cost)
 # multi_zone = false
 
+# Assign public IPs to storage nodes (default: false for private-only deployment)
+# assign_public_ip = true  # Set true for evaluation/testing (default: false)
+
 # Environment label
 # environment = "production"

@@ -232,7 +232,7 @@ PERFORMANCE POLICIES:
     regional-*  Cross-zone HA (higher durability, ~10-17% write overhead)
 
     Policy                      GCP             AWS             Azure           Write IOPS   Read IOPS
-    zonal-standard-performance  n2-highcpu-8    i3en.2xlarge    L4aos_v4        110-144K     360-380K
+    zonal-standard-performance  n2-highcpu-8    i3en.2xlarge    L4aos_v4        100-140K     340-380K
     zonal-medium-performance    n2-highcpu-16   i3en.xlarge     L8aos_v4        175-288K     650-720K
     zonal-high-performance      n2-highcpu-32   i3en.6xlarge    L24aos_v4       290-864K     900K-2.16M
     zonal-ultra-performance     n2-highcpu-64   i3en.12xlarge   L32aos_v4       585K-1.15M   1.13M-2.88M
@@ -552,6 +552,8 @@ performance_policy = "$POLICY"
 zone = "$ZONE"
 machine_type = "$RESOLVED_MACHINE_TYPE"
 use_spot_vms = $USE_SPOT
+source_image_project = "zettalane-dev"
+source_image = "mayascale19-osimage-20260125"
 EOF
             # Reserve client slot in placement policy for colocation
             if [ "$ENABLE_COLOCATION" = "true" ]; then
@@ -566,6 +568,7 @@ cluster_name = "$DEPLOYMENT_NAME"
 performance_policy = "$POLICY"
 instance_type_override = "$RESOLVED_MACHINE_TYPE"
 use_spot_instances = $USE_SPOT
+ami_id = "ami-0a37d6b99305b6746"
 ssh_cidr_blocks = ["0.0.0.0/0"]
 availability_zone = "$AWS_AZ"
 EOF
@@ -579,6 +582,7 @@ cluster_name = "$DEPLOYMENT_NAME"
 location = "$LOCATION"
 performance_policy = "$POLICY"
 use_spot_instances = $USE_SPOT
+vm_image_id = "/subscriptions/a1374ce4-3087-440a-9af3-674d883c6d3f/resourceGroups/zettalane-dev/providers/Microsoft.Compute/galleries/zettalaneDev/images/mayascale19/versions/1.9.20251215"
 $([ -n "$SSH_PUBLIC_KEY" ] && echo "ssh_public_key = \"$SSH_PUBLIC_KEY\"")
 EOF
             if [ -n "$RESOURCE_GROUP" ]; then

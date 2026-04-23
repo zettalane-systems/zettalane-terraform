@@ -49,7 +49,7 @@ output "nodes" {
   value = [
     for i in range(var.node_count) : {
       name        = azurerm_linux_virtual_machine.mayascale[i].name
-      external_ip = azurerm_public_ip.mayascale[i].ip_address
+      external_ip = var.assign_public_ip ? azurerm_public_ip.mayascale[i].ip_address : null
       internal_ip = azurerm_network_interface.mayascale[i].private_ip_address
       zone        = azurerm_linux_virtual_machine.mayascale[i].zone
       vm_size     = azurerm_linux_virtual_machine.mayascale[i].size
@@ -61,7 +61,7 @@ output "primary_node" {
   description = "Primary storage node (node0) details"
   value = {
     name        = azurerm_linux_virtual_machine.mayascale[0].name
-    external_ip = azurerm_public_ip.mayascale[0].ip_address
+    external_ip = var.assign_public_ip ? azurerm_public_ip.mayascale[0].ip_address : null
     internal_ip = azurerm_network_interface.mayascale[0].private_ip_address
     zone        = azurerm_linux_virtual_machine.mayascale[0].zone
   }
@@ -71,7 +71,7 @@ output "secondary_node" {
   description = "Secondary storage node (node1) details if exists"
   value = var.node_count > 1 ? {
     name        = azurerm_linux_virtual_machine.mayascale[1].name
-    external_ip = azurerm_public_ip.mayascale[1].ip_address
+    external_ip = var.assign_public_ip ? azurerm_public_ip.mayascale[1].ip_address : null
     internal_ip = azurerm_network_interface.mayascale[1].private_ip_address
     zone        = azurerm_linux_virtual_machine.mayascale[1].zone
   } : null
@@ -80,7 +80,7 @@ output "secondary_node" {
 # Flat outputs for script compatibility
 output "node1_public_ip" {
   description = "Node1 public IP address"
-  value       = azurerm_public_ip.mayascale[0].ip_address
+  value       = var.assign_public_ip ? azurerm_public_ip.mayascale[0].ip_address : null
 }
 
 output "node1_private_ip" {
@@ -95,7 +95,7 @@ output "node1_name" {
 
 output "node2_public_ip" {
   description = "Node2 public IP address"
-  value       = var.node_count > 1 ? azurerm_public_ip.mayascale[1].ip_address : ""
+  value       = var.node_count > 1 && var.assign_public_ip ? azurerm_public_ip.mayascale[1].ip_address : null
 }
 
 output "node2_private_ip" {
@@ -166,7 +166,7 @@ output "ssh_commands" {
   description = "SSH commands to connect to each node"
   value = {
     for i in range(var.node_count) :
-    "node${i + 1}" => "ssh ${var.admin_username}@${azurerm_public_ip.mayascale[i].ip_address}"
+    "node${i + 1}" => var.assign_public_ip ? "ssh ${var.admin_username}@${azurerm_public_ip.mayascale[i].ip_address}" : "az ssh vm -n ${azurerm_linux_virtual_machine.mayascale[i].name} -g ${local.resource_group_name}"
   }
 }
 
@@ -321,11 +321,11 @@ output "deployment_info" {
     machine_type        = local.vm_size
     node1_name          = azurerm_linux_virtual_machine.mayascale[0].name
     node1_zone          = azurerm_linux_virtual_machine.mayascale[0].zone
-    node1_external_ip   = azurerm_public_ip.mayascale[0].ip_address
+    node1_external_ip   = var.assign_public_ip ? azurerm_public_ip.mayascale[0].ip_address : null
     node1_internal_ip   = azurerm_network_interface.mayascale[0].private_ip_address
     node2_name          = var.node_count > 1 ? azurerm_linux_virtual_machine.mayascale[1].name : ""
     node2_zone          = var.node_count > 1 ? azurerm_linux_virtual_machine.mayascale[1].zone : ""
-    node2_external_ip   = var.node_count > 1 ? azurerm_public_ip.mayascale[1].ip_address : ""
+    node2_external_ip   = var.node_count > 1 && var.assign_public_ip ? azurerm_public_ip.mayascale[1].ip_address : null
     node2_internal_ip   = var.node_count > 1 ? azurerm_network_interface.mayascale[1].private_ip_address : ""
     vip_primary         = local.vip_address_final
     vip_secondary       = local.vip_address_2_final

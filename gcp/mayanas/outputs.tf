@@ -24,7 +24,7 @@ output "password_metadata_url" {
 # Standard outputs (consistent across all clouds)
 output "node1_public_ip" {
   description = "Public IP of node 1"
-  value       = google_compute_instance.mayanas_node1.network_interface[0].access_config[0].nat_ip
+  value       = var.assign_public_ip ? google_compute_instance.mayanas_node1.network_interface[0].access_config[0].nat_ip : null
 }
 
 output "node1_private_ip" {
@@ -39,7 +39,7 @@ output "node1_name" {
 
 output "node2_public_ip" {
   description = "Public IP of node 2 (HA only)"
-  value       = length(google_compute_instance.mayanas_node2) > 0 ? google_compute_instance.mayanas_node2[0].network_interface[0].access_config[0].nat_ip : null
+  value       = length(google_compute_instance.mayanas_node2) > 0 && var.assign_public_ip ? google_compute_instance.mayanas_node2[0].network_interface[0].access_config[0].nat_ip : null
 }
 
 output "node2_private_ip" {
@@ -129,12 +129,12 @@ output "ssh_command_node2" {
 # Web UI Access
 output "web_ui_url_node1" {
   description = "URL for MayaNAS Web UI on Node 1 (via external IP)"
-  value       = "http://${google_compute_instance.mayanas_node1.network_interface[0].access_config[0].nat_ip}:2020/"
+  value       = var.assign_public_ip ? "http://${google_compute_instance.mayanas_node1.network_interface[0].access_config[0].nat_ip}:2020/" : "Use SSH tunnel: gcloud compute ssh ... -- -L 2020:localhost:2020"
 }
 
 output "web_ui_url_node2" {
   description = "URL for MayaNAS Web UI on Node 2 (via external IP)"
-  value       = length(google_compute_instance.mayanas_node2) > 0 ? "http://${google_compute_instance.mayanas_node2[0].network_interface[0].access_config[0].nat_ip}:2020/" : ""
+  value       = length(google_compute_instance.mayanas_node2) > 0 && var.assign_public_ip ? "http://${google_compute_instance.mayanas_node2[0].network_interface[0].access_config[0].nat_ip}:2020/" : ""
 }
 
 # SSH Tunnel Commands for Web UI Access
@@ -243,8 +243,8 @@ output "deployment_summary" {
     ├─ Machine Type: ${var.machine_type}
     ├─ Node1 Zone: ${google_compute_instance.mayanas_node1.zone}
     ${var.deployment_type != "single" ? "├─ Node2 Zone: ${length(google_compute_instance.mayanas_node2) > 0 ? google_compute_instance.mayanas_node2[0].zone : ""}" : ""}
-    ├─ Node1 IP: ${google_compute_instance.mayanas_node1.network_interface[0].network_ip} (${google_compute_instance.mayanas_node1.network_interface[0].access_config[0].nat_ip})
-    ${var.deployment_type != "single" && length(google_compute_instance.mayanas_node2) > 0 ? "└─ Node2 IP: ${google_compute_instance.mayanas_node2[0].network_interface[0].network_ip} (${google_compute_instance.mayanas_node2[0].network_interface[0].access_config[0].nat_ip})" : ""}
+    ├─ Node1 IP: ${google_compute_instance.mayanas_node1.network_interface[0].network_ip}${var.assign_public_ip ? " (${google_compute_instance.mayanas_node1.network_interface[0].access_config[0].nat_ip})" : " (no public IP)"}
+    ${var.deployment_type != "single" && length(google_compute_instance.mayanas_node2) > 0 ? "└─ Node2 IP: ${google_compute_instance.mayanas_node2[0].network_interface[0].network_ip}${var.assign_public_ip ? " (${google_compute_instance.mayanas_node2[0].network_interface[0].access_config[0].nat_ip})" : " (no public IP)"}" : ""}
 
     🌐 NETWORK CONFIGURATION
     ├─ VPC: ${var.network_name}

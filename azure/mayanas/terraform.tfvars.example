@@ -40,6 +40,9 @@ vm_size = "Standard_D4s_v3"
 # Recommended: true for dev/test, false for production
 use_spot_instance = false
 
+# Assign public IPs to storage nodes (default: false for private-only deployment)
+# assign_public_ip = true  # Set true for evaluation/testing (default: false)
+
 # =============================================================================
 # STORAGE
 # =============================================================================

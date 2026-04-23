@@ -164,6 +164,12 @@ variable "os_disk_size_gb" {
   }
 }
 
+variable "assign_public_ip" {
+  description = "Assign public IPs to instances (set false for private-only deployment)"
+  type        = bool
+  default     = false
+}
+
 # Spot Instance Configuration (Cost Optimization)
 variable "use_spot_instance" {
   description = "Use Azure Spot VMs for cost savings (60-90% savings)"

@@ -98,6 +98,12 @@ variable "use_spot_instances" {
   default     = true
 }
 
+variable "assign_public_ip" {
+  description = "Assign public IPs to instances (set false for private-only deployment)"
+  type        = bool
+  default     = false
+}
+
 variable "instance_type_override" {
   description = "Override instance type from performance policy (for custom configurations)"
   type        = string

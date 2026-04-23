@@ -202,6 +202,12 @@ variable "force_destroy_buckets" {
   default     = false
 }
 
+variable "assign_public_ip" {
+  description = "Assign public IPs to instances (set false for private-only deployment)"
+  type        = bool
+  default     = false
+}
+
 # Network Configuration
 variable "vip_address" {
   description = "Virtual IP address for HA failover (optional - auto-calculated if not provided)"

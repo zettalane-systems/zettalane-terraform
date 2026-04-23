@@ -23,6 +23,9 @@ performance_policy = "zonal-medium-performance"
 # Use spot VMs for cost savings (60-90% discount, may be preempted)
 use_spot_vms = false
 
+# Assign public IPs to storage nodes (default: false for private-only deployment)
+# assign_public_ip = true  # Set true for evaluation/testing (default: false)
+
 # Optional: Override machine type (auto-selected based on policy)
 # machine_type = "n2-highcpu-32"
 

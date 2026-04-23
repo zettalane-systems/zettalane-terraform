@@ -497,10 +497,11 @@ resource "google_compute_instance" "mayanas_node1" {
     subnetwork = data.google_compute_subnetwork.default.id
     nic_type   = "GVNIC"  # Google Virtual NIC: better performance than VirtIO, required for TIER_1
 
-    access_config {
-      # PREMIUM tier: Use Google's high-quality global network (vs STANDARD = public internet)
-      # PREMIUM = lower latency, higher reliability, better for production/enterprise
-      network_tier = "PREMIUM"
+    dynamic "access_config" {
+      for_each = var.assign_public_ip ? [1] : []
+      content {
+        network_tier = "PREMIUM"
+      }
     }
   }
 
@@ -582,10 +583,11 @@ resource "google_compute_instance" "mayanas_node2" {
     subnetwork = data.google_compute_subnetwork.default.id
     nic_type   = "GVNIC"  # Google Virtual NIC: better performance than VirtIO, required for TIER_1
 
-    access_config {
-      # PREMIUM tier: Use Google's high-quality global network (vs STANDARD = public internet)
-      # PREMIUM = lower latency, higher reliability, better for production/enterprise
-      network_tier = "PREMIUM"
+    dynamic "access_config" {
+      for_each = var.assign_public_ip ? [1] : []
+      content {
+        network_tier = "PREMIUM"
+      }
     }
   }
 

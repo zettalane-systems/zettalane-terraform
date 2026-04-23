@@ -16,7 +16,7 @@ output "private_ips" {
 
 output "public_ips" {
   description = "Public IP addresses of MayaNAS instances"
-  value       = azurerm_public_ip.mayanas[*].ip_address
+  value       = var.assign_public_ip ? azurerm_public_ip.mayanas[*].ip_address : []
 }
 
 # Standardized output names (for cross-cloud compatibility)
@@ -32,12 +32,12 @@ output "node2_name" {
 
 output "node1_public_ip" {
   description = "Public IP of Node 1"
-  value       = azurerm_public_ip.mayanas[0].ip_address
+  value       = var.assign_public_ip ? azurerm_public_ip.mayanas[0].ip_address : null
 }
 
 output "node2_public_ip" {
   description = "Public IP of Node 2"
-  value       = local.node_count > 1 ? azurerm_public_ip.mayanas[1].ip_address : null
+  value       = local.node_count > 1 && var.assign_public_ip ? azurerm_public_ip.mayanas[1].ip_address : null
 }
 
 output "node1_private_ip" {
@@ -53,12 +53,12 @@ output "node2_private_ip" {
 # SSH Connection Information
 output "ssh_command_node1" {
   description = "SSH command for Node 1 (Primary)"
-  value       = "ssh -i ~/.ssh/${var.ssh_key_resource_id != "" ? basename(var.ssh_key_resource_id) : "id_rsa"}.pem azureuser@${azurerm_public_ip.mayanas[0].ip_address}"
+  value       = var.assign_public_ip ? "ssh -i ~/.ssh/${var.ssh_key_resource_id != "" ? basename(var.ssh_key_resource_id) : "id_rsa"}.pem azureuser@${azurerm_public_ip.mayanas[0].ip_address}" : "az ssh vm -n ${azurerm_linux_virtual_machine.mayanas[0].name} -g ${local.resource_group_name}"
 }
 
 output "ssh_command_node2" {
   description = "SSH command for Node 2 (Secondary) - HA deployments only"
-  value       = local.node_count > 1 ? "ssh -i ~/.ssh/${var.ssh_key_resource_id != "" ? basename(var.ssh_key_resource_id) : "id_rsa"}.pem azureuser@${azurerm_public_ip.mayanas[1].ip_address}" : "N/A - Single node deployment"
+  value       = local.node_count > 1 ? (var.assign_public_ip ? "ssh -i ~/.ssh/${var.ssh_key_resource_id != "" ? basename(var.ssh_key_resource_id) : "id_rsa"}.pem azureuser@${azurerm_public_ip.mayanas[1].ip_address}" : "az ssh vm -n ${azurerm_linux_virtual_machine.mayanas[1].name} -g ${local.resource_group_name}") : "N/A - Single node deployment"
 }
 
 # High Availability Information
@@ -286,8 +286,8 @@ output "management_commands" {
     check_storage_account = "az storage account show --name ${azurerm_storage_account.mayanas.name} --resource-group ${local.resource_group_name}"
     check_load_balancer = var.vip_mechanism == "load-balancer" && local.node_count > 1 ? "az lb show --name ${azurerm_lb.mayanas[0].name} --resource-group ${local.resource_group_name}" : "N/A"
     check_route_table = var.vip_mechanism == "custom-route" && local.node_count > 1 ? "az network route-table show --name ${azurerm_route_table.mayanas[0].name} --resource-group ${local.resource_group_name}" : "N/A"
-    ssh_node1 = "ssh -i ~/.ssh/${var.ssh_key_resource_id != "" ? basename(var.ssh_key_resource_id) : "id_rsa"}.pem azureuser@${azurerm_public_ip.mayanas[0].ip_address}"
-    ssh_node2 = local.node_count > 1 ? "ssh -i ~/.ssh/${var.ssh_key_resource_id != "" ? basename(var.ssh_key_resource_id) : "id_rsa"}.pem azureuser@${azurerm_public_ip.mayanas[1].ip_address}" : "N/A"
+    ssh_node1 = var.assign_public_ip ? "ssh -i ~/.ssh/${var.ssh_key_resource_id != "" ? basename(var.ssh_key_resource_id) : "id_rsa"}.pem azureuser@${azurerm_public_ip.mayanas[0].ip_address}" : "az ssh vm -n ${azurerm_linux_virtual_machine.mayanas[0].name} -g ${local.resource_group_name}"
+    ssh_node2 = local.node_count > 1 ? (var.assign_public_ip ? "ssh -i ~/.ssh/${var.ssh_key_resource_id != "" ? basename(var.ssh_key_resource_id) : "id_rsa"}.pem azureuser@${azurerm_public_ip.mayanas[1].ip_address}" : "az ssh vm -n ${azurerm_linux_virtual_machine.mayanas[1].name} -g ${local.resource_group_name}") : "N/A"
   }
 }
 

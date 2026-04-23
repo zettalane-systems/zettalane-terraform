@@ -486,8 +486,11 @@ resource "google_compute_instance" "mayascale_nodes" {
     network    = "default"
     nic_type   = "GVNIC"  # Required for Tier_1 networking and jumbo frames
 
-    access_config {
-      network_tier = "PREMIUM"
+    dynamic "access_config" {
+      for_each = var.assign_public_ip ? [1] : []
+      content {
+        network_tier = "PREMIUM"
+      }
     }
   }
 

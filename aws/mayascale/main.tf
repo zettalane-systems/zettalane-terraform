@@ -566,10 +566,11 @@ resource "aws_instance" "mayascale_node2" {
   iam_instance_profile = aws_iam_instance_profile.mayascale_profile.name
   availability_zone    = local.node2_az
 
-  # Use subnet_id to let AWS auto-create primary ENI with public IP (like CloudFormation/MayaNAS)
+  # Use subnet_id to let AWS auto-create primary ENI (like CloudFormation/MayaNAS)
   # For cross-AZ: use secondary subnet (in different AZ). For same-AZ: same as primary
-  subnet_id              = data.aws_subnet.secondary.id
-  vpc_security_group_ids = [aws_security_group.mayascale_sg.id]
+  subnet_id                   = data.aws_subnet.secondary.id
+  vpc_security_group_ids      = [aws_security_group.mayascale_sg.id]
+  associate_public_ip_address = var.assign_public_ip
 
   # Placement group only for same-AZ AND on-demand instances
   # Spot instances are excluded to avoid complexity with instance replacements
@@ -626,9 +627,10 @@ resource "aws_instance" "mayascale_node1" {
   iam_instance_profile = aws_iam_instance_profile.mayascale_profile.name
   availability_zone    = local.node1_az
 
-  # Use subnet_id to let AWS auto-create primary ENI with public IP (like CloudFormation/MayaNAS)
-  subnet_id              = data.aws_subnet.primary.id
-  vpc_security_group_ids = [aws_security_group.mayascale_sg.id]
+  # Use subnet_id to let AWS auto-create primary ENI (like CloudFormation/MayaNAS)
+  subnet_id                   = data.aws_subnet.primary.id
+  vpc_security_group_ids      = [aws_security_group.mayascale_sg.id]
+  associate_public_ip_address = var.assign_public_ip
 
   # VIPs are NOT pre-assigned (CloudFormation pattern)
   # VIPs are managed dynamically by Pacemaker awsIP resource agent via AWS API

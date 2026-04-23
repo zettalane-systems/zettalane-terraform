@@ -93,6 +93,12 @@ variable "use_spot_vms" {
   default     = false
 }
 
+variable "assign_public_ip" {
+  description = "Assign public IPs to instances (set false for private-only deployment)"
+  type        = bool
+  default     = false
+}
+
 # Client Access Configuration
 variable "client_nvme_port" {
   description = "Base port for client NVMe-oF connections (data-node-1 uses this port, data-node-2 uses +2, etc.)"

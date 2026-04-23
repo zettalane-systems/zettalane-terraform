@@ -534,7 +534,7 @@ resource "azurerm_proximity_placement_group" "mayascale" {
 # ============================================================================
 
 resource "azurerm_public_ip" "mayascale" {
-  count               = var.node_count
+  count               = var.assign_public_ip ? var.node_count : 0
   name                = "pip-${var.cluster_name}-node${count.index + 1}-${random_id.deployment.hex}"
   location            = local.resource_group.location
   resource_group_name = local.resource_group_name
@@ -572,7 +572,7 @@ resource "azurerm_network_interface" "mayascale" {
     name                          = "internal"
     subnet_id                     = local.subnet_id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.mayascale[count.index].id
+    public_ip_address_id          = var.assign_public_ip ? azurerm_public_ip.mayascale[count.index].id : null
   }
 
   tags = merge(var.tags, {

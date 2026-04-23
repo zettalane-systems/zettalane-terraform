@@ -331,6 +331,12 @@ variable "use_spot_instances" {
   default     = false
 }
 
+variable "assign_public_ip" {
+  description = "Assign public IPs to instances (set false for private-only deployment)"
+  type        = bool
+  default     = false
+}
+
 variable "spot_max_price" {
   description = "Maximum price for spot instances (-1 = accept current market price)"
   type        = number

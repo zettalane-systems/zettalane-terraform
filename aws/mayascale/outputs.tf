@@ -98,7 +98,7 @@ output "node2_instance_id" {
 
 output "node1_public_ip" {
   description = "Node1 public IP address"
-  value       = aws_instance.mayascale_node1.public_ip
+  value       = var.assign_public_ip ? aws_instance.mayascale_node1.public_ip : null
 }
 
 output "node1_private_ip" {
@@ -113,7 +113,7 @@ output "node1_name" {
 
 output "node2_public_ip" {
   description = "Node2 public IP address"
-  value       = aws_instance.mayascale_node2.public_ip
+  value       = var.assign_public_ip ? aws_instance.mayascale_node2.public_ip : null
 }
 
 output "node2_private_ip" {
@@ -168,8 +168,8 @@ output "validation_status" {
 output "ssh_commands" {
   description = "SSH commands to connect to nodes"
   value = {
-    node1 = "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node1.public_ip}"
-    node2 = "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node2.public_ip}"
+    node1 = var.assign_public_ip ? "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node1.public_ip}" : "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node1.private_ip}"
+    node2 = var.assign_public_ip ? "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node2.public_ip}" : "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node2.private_ip}"
   }
 }
 
@@ -188,7 +188,7 @@ output "cost_optimization_tips" {
 output "next_steps" {
   description = "Next steps for deployment validation"
   value = {
-    step1 = "SSH to node1: ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node1.public_ip}"
+    step1 = var.assign_public_ip ? "SSH to node1: ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node1.public_ip}" : "SSH to node1: ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node1.private_ip}"
     step2 = "Monitor startup: tail -f /var/log/cloud-init-output.log"
     step3 = "Deploy client using validate-mayascale.sh with --cloud aws"
     step4 = "Run performance tests to validate IOPS targets"
@@ -262,11 +262,11 @@ output "deployment_info" {
     machine_type        = local.selected_instance_type
     node1_name          = aws_instance.mayascale_node1.id
     node1_az            = aws_instance.mayascale_node1.availability_zone
-    node1_external_ip   = aws_instance.mayascale_node1.public_ip
+    node1_external_ip   = var.assign_public_ip ? aws_instance.mayascale_node1.public_ip : null
     node1_internal_ip   = aws_instance.mayascale_node1.private_ip
     node2_name          = aws_instance.mayascale_node2.id
     node2_az            = aws_instance.mayascale_node2.availability_zone
-    node2_external_ip   = aws_instance.mayascale_node2.public_ip
+    node2_external_ip   = var.assign_public_ip ? aws_instance.mayascale_node2.public_ip : null
     node2_internal_ip   = aws_instance.mayascale_node2.private_ip
     vip_primary         = local.vip_address
     vip_secondary       = local.vip_address_2

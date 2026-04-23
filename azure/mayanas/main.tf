@@ -488,9 +488,9 @@ resource "azurerm_storage_container" "mayanas" {
   container_access_type = "private"
 }
 
-# Public IP addresses for VMs
+# Public IP addresses for VMs (conditional on assign_public_ip)
 resource "azurerm_public_ip" "mayanas" {
-  count               = local.node_count
+  count               = var.assign_public_ip ? local.node_count : 0
   name                = "pip-mayanas-node${count.index + 1}-${local.cluster_name}"
   location            = local.resource_group.location
   resource_group_name = local.resource_group_name
@@ -511,7 +511,7 @@ resource "azurerm_network_interface" "mayanas" {
     name                          = "internal"
     subnet_id                     = local.subnet_id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.mayanas[count.index].id
+    public_ip_address_id          = var.assign_public_ip ? azurerm_public_ip.mayanas[count.index].id : null
   }
 }
 
