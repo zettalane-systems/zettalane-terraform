@@ -153,8 +153,8 @@ output "ssh_tunnel_node2_web_ui" {
 
 # Firewall Rules
 output "firewall_ssh_rule" {
-  description = "Name of the SSH firewall rule"
-  value       = google_compute_firewall.mayanas_ssh.name
+  description = "Name of the SSH firewall rule (IAP rule if enable_iap, else direct SSH rule)"
+  value       = var.enable_iap ? google_compute_firewall.mayanas_iap_ssh[0].name : google_compute_firewall.mayanas_ssh[0].name
 }
 
 output "firewall_internal_rule" {

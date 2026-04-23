@@ -80,11 +80,22 @@ variable "boot_disk_size_gb" {
 }
 
 # Storage Configuration
+variable "blocksize" {
+  description = "Object block size for cloud storage backend (objbacker). Must be >= ZFS recordsize. Larger values reduce GCS request rate and improve throughput on high-bandwidth links."
+  type        = string
+  default     = "1024K"
+
+  validation {
+    condition     = contains(["512K", "1024K", "2048K", "4096K"], var.blocksize)
+    error_message = "Block size must be one of: 512K, 1024K, 2048K, 4096K."
+  }
+}
+
 variable "bucket_count" {
   description = "Number of GCS buckets to create per node for scaling capacity"
   type        = number
   default     = 1
-  
+
   validation {
     condition     = var.bucket_count >= 1 && var.bucket_count <= 12
     error_message = "Bucket count must be between 1 and 12."
@@ -192,9 +203,15 @@ variable "ssh_public_key" {
 }
 
 variable "ssh_source_ranges" {
-  description = "CIDR ranges allowed for SSH access"
+  description = "CIDR ranges allowed for SSH access (ignored when enable_iap = true)"
   type        = list(string)
   default     = ["0.0.0.0/0"]
+}
+
+variable "enable_iap" {
+  description = "Enable IAP tunnel for SSH instead of direct public-IP SSH. Creates a project-wide IAP firewall rule (source 35.235.240.0/20)."
+  type        = bool
+  default     = false
 }
 
 # Startup Script

@@ -375,8 +375,9 @@ resource "google_compute_region_disk" "mayanas_metadata_regional" {
 # Note: We use the existing default subnet and configure alias IP ranges on instances
 # No need to create a new subnetwork - GCP will handle alias IP ranges automatically
 
-# Firewall rule for SSH access
+# Firewall rule for SSH access (direct, when IAP is disabled)
 resource "google_compute_firewall" "mayanas_ssh" {
+  count   = var.enable_iap ? 0 : 1
   name    = "${var.cluster_name}-mayanas-ssh-${local.resource_suffix}"
   network = data.google_compute_network.default.name
 
@@ -387,6 +388,21 @@ resource "google_compute_firewall" "mayanas_ssh" {
 
   source_ranges = var.ssh_source_ranges
   target_tags   = ["mayanas-${var.cluster_name}"]
+}
+
+# Firewall rule for IAP SSH tunnel (project-wide, shared across deployments)
+resource "google_compute_firewall" "mayanas_iap_ssh" {
+  count   = var.enable_iap ? 1 : 0
+  name    = "mayanas-allow-iap-ssh"
+  network = data.google_compute_network.default.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  source_ranges = ["35.235.240.0/20"]
+  description   = "Allow SSH via IAP tunnel to all MayaNAS instances"
 }
 
 # Firewall rule for internal communication between nodes
@@ -460,6 +476,7 @@ data "template_file" "startup_script_node1" {
     random_suffix       = local.resource_suffix
     mayanas_startup_wait = var.mayanas_startup_wait != null ? tostring(var.mayanas_startup_wait) : ""
     bucket_count        = var.bucket_count
+    blocksize           = var.blocksize
     subnet_cidr         = data.google_compute_subnetwork.default.ip_cidr_range
   }
 }
