@@ -33,7 +33,7 @@ resource "google_compute_instance" "client" {
 
   boot_disk {
     initialize_params {
-      image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
+      image = var.source_image
       size  = 30
       type  = "pd-balanced"
     }
