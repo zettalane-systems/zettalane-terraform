@@ -257,6 +257,47 @@ data "google_compute_subnetwork" "default" {
   region = var.region
 }
 
+# When VMs have no public IP, they also have no route to the internet —
+# including *.googleapis.com. The startup script shells out to gcloud, which
+# then fails with "Network is unreachable" and cluster setup never completes.
+# Private Google Access routes *.googleapis.com traffic over Google's internal
+# fabric, fixing this without needing a NAT gateway. Idempotent; leaving it
+# on after `terraform destroy` is harmless.
+#
+# We PATCH the subnet directly via the Compute REST API using the same OAuth
+# token the google provider already holds. No gcloud dependency in the PATH,
+# no subnet import / state ownership complication.
+data "google_client_config" "default" {}
+
+resource "null_resource" "enable_private_google_access" {
+  count = var.assign_public_ip ? 0 : 1
+
+  triggers = {
+    subnet  = data.google_compute_subnetwork.default.self_link
+    region  = var.region
+    project = var.project_id
+  }
+
+  provisioner "local-exec" {
+    # Pass the token via env to keep it out of command-line / plan output.
+    environment = {
+      GCP_TOKEN = data.google_client_config.default.access_token
+    }
+
+    # Dedicated API method — no fingerprint needed, unlike the generic
+    # subnetworks.patch which rejects partial updates without one.
+    # Returns an LRO (operation) object; we don't need to poll because PGA
+    # propagates in <5s and the VMs don't boot until this resource succeeds.
+    command = <<-EOT
+      curl -sSf -X POST \
+        -H "Authorization: Bearer $GCP_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{"privateIpGoogleAccess": true}' \
+        "https://compute.googleapis.com/compute/v1/projects/${var.project_id}/regions/${var.region}/subnetworks/${data.google_compute_subnetwork.default.name}/setPrivateIpGoogleAccess"
+    EOT
+  }
+}
+
 # Service Account for MayaNAS instances
 resource "google_service_account" "mayanas_sa" {
   account_id   = "${local.trimmed_cluster_name}-${local.resource_suffix}"
@@ -602,7 +643,8 @@ resource "google_compute_instance" "mayanas_node1" {
     google_project_iam_member.mayanas_compute_admin,
     google_project_iam_member.mayanas_network_admin,
     google_project_iam_member.mayanas_storage_admin,
-    google_project_iam_member.mayanas_service_account_user
+    google_project_iam_member.mayanas_service_account_user,
+    null_resource.enable_private_google_access
   ]
 }
 
@@ -688,7 +730,8 @@ resource "google_compute_instance" "mayanas_node2" {
     google_project_iam_member.mayanas_compute_admin,
     google_project_iam_member.mayanas_network_admin,
     google_project_iam_member.mayanas_storage_admin,
-    google_project_iam_member.mayanas_service_account_user
+    google_project_iam_member.mayanas_service_account_user,
+    null_resource.enable_private_google_access
   ]
 }
 
