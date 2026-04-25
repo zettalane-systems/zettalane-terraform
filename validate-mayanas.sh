@@ -84,6 +84,7 @@ SSH_PUBLIC_KEY=""
 DESTROY_MODE="false"
 CLUSTER_TYPE="single"
 USE_SPOT="false"
+ASSIGN_PUBLIC_IP="true"
 
 # Tier to machine type mapping
 declare -A GCP_TIERS=( ["basic"]="n2-standard-4" ["standard"]="n2-standard-8" ["performance"]="n2-standard-16" ["ultra"]="n2-standard-32" )
@@ -118,8 +119,11 @@ COMMON OPTIONS:
     -m, --machine-type TYPE   Override machine type (cloud-specific)
     -b, --bucket-count COUNT  Number of cloud storage buckets (default: 1)
     --ssh-key PATH            SSH public key file (default: ~/.ssh/id_rsa.pub)
-    --spot                    Use spot/preemptible instances (default)
     --spot                    Use spot/preemptible instances (default: on-demand)
+    --no-public-ip            Deploy storage nodes with no public IPs.
+                              Auto-enables Private Google Access on the
+                              subnet (GCP) and IAP tunnel for SSH.
+                              (default: public IPs ON for direct SSH)
     --skip-deploy             Skip terraform apply, validate existing deployment
     --skip-client             Skip client deployment, storage-only validation
     -d, --destroy             Destroy all resources and exit
@@ -213,6 +217,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --spot)
             USE_SPOT="true"
+            shift
+            ;;
+        --no-public-ip)
+            ASSIGN_PUBLIC_IP="false"
             shift
             ;;
         --skip-deploy)
@@ -550,6 +558,7 @@ bucket_count = $BUCKET_COUNT
 use_spot_vms = $USE_SPOT
 force_destroy_buckets = true
 mayanas_startup_wait = 15
+assign_public_ip = $ASSIGN_PUBLIC_IP
 
 # TODO: REMOVE BEFORE COMMIT - devel image for testing
 source_image_project = "zettalane-dev"
@@ -566,6 +575,7 @@ bucket_count = $BUCKET_COUNT
 use_spot_instance = $USE_SPOT
 ssh_cidr_blocks = ["0.0.0.0/0"]
 force_destroy_buckets = true
+assign_public_ip = $ASSIGN_PUBLIC_IP
 
 # TODO: REMOVE BEFORE COMMIT - devel image for testing
 ami_id = "ami-0fb9b36c5ccadb652"
@@ -589,6 +599,7 @@ vm_size = "$RESOLVED_MACHINE_TYPE"
 bucket_count = $BUCKET_COUNT
 use_spot_instance = $USE_SPOT
 ssh_cidr_blocks = ["0.0.0.0/0"]
+assign_public_ip = $ASSIGN_PUBLIC_IP
 $([ -n "$SSH_PUBLIC_KEY" ] && echo "ssh_public_key = \"$SSH_PUBLIC_KEY\"")
 
 # TODO: REMOVE BEFORE COMMIT - devel image for testing

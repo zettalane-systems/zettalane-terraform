@@ -83,6 +83,7 @@ SKIP_CLIENT="false"
 SSH_PUBLIC_KEY=""
 DESTROY_MODE="false"
 USE_SPOT="false"
+ASSIGN_PUBLIC_IP="true"
 
 # Performance policy to machine type mapping
 # GCP: n2-highcpu instances with local SSDs
@@ -225,6 +226,10 @@ COMMON OPTIONS:
     --client-machine-type TYPE  Override client machine type (cloud-specific)
     --ssh-key PATH            SSH public key file (default: ~/.ssh/id_rsa.pub)
     --spot                    Use spot/preemptible instances (default: on-demand)
+    --no-public-ip            Deploy storage nodes with no public IPs.
+                              Auto-enables Private Google Access on the
+                              subnet (GCP) and IAP tunnel for SSH.
+                              (default: public IPs ON for direct SSH)
     --skip-deploy             Skip terraform apply, validate existing deployment
     --skip-client             Skip client deployment, storage-only validation
     -d, --destroy             Destroy all resources and exit
@@ -308,6 +313,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --spot)
             USE_SPOT="true"
+            shift
+            ;;
+        --no-public-ip)
+            ASSIGN_PUBLIC_IP="false"
             shift
             ;;
         --skip-deploy)
@@ -555,6 +564,7 @@ performance_policy = "$POLICY"
 zone = "$ZONE"
 machine_type = "$RESOLVED_MACHINE_TYPE"
 use_spot_vms = $USE_SPOT
+assign_public_ip = $ASSIGN_PUBLIC_IP
 source_image_project = "zettalane-dev"
 source_image = "mayascale19-osimage-20260125"
 EOF
@@ -571,6 +581,7 @@ cluster_name = "$DEPLOYMENT_NAME"
 performance_policy = "$POLICY"
 instance_type_override = "$RESOLVED_MACHINE_TYPE"
 use_spot_instances = $USE_SPOT
+assign_public_ip = $ASSIGN_PUBLIC_IP
 ami_id = "ami-0a37d6b99305b6746"
 ssh_cidr_blocks = ["0.0.0.0/0"]
 availability_zone = "$AWS_AZ"
@@ -585,6 +596,7 @@ cluster_name = "$DEPLOYMENT_NAME"
 location = "$LOCATION"
 performance_policy = "$POLICY"
 use_spot_instances = $USE_SPOT
+assign_public_ip = $ASSIGN_PUBLIC_IP
 vm_image_id = "/subscriptions/a1374ce4-3087-440a-9af3-674d883c6d3f/resourceGroups/zettalane-dev/providers/Microsoft.Compute/galleries/zettalaneDev/images/mayascale19/versions/1.9.20251215"
 $([ -n "$SSH_PUBLIC_KEY" ] && echo "ssh_public_key = \"$SSH_PUBLIC_KEY\"")
 EOF
