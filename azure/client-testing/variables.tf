@@ -63,3 +63,36 @@ variable "proximity_placement_group_id" {
   type        = string
   default     = ""
 }
+
+# Marketplace image reference. Defaults to Rocky Linux 9 from RESF (the
+# official Rocky Enterprise Software Foundation publisher) because
+# Whamcloud's Lustre 2.17 DKMS package builds cleanly against its kernel.
+# Rocky 10 is not yet published on Azure Marketplace — the resf SKU "10-base"
+# placeholder exists but has no published versions.
+# Override per-deployment if you need Ubuntu / RHEL / Alma / etc.
+#
+# Look up alternatives with:
+#   az vm image list --publisher resf --offer rockylinux-x86_64 --all -o table
+variable "source_image_publisher" {
+  description = "Marketplace publisher (e.g. Canonical, resf, RedHat). Default is Canonical (Ubuntu) — the validate-mayanas / NFS performance test scripts assume a Debian-family client (apt-based). For Lustre clients, deploy-lustre.sh overrides this to resf/rockylinux-x86_64/9-base."
+  type        = string
+  default     = "Canonical"
+}
+
+variable "source_image_offer" {
+  description = "Marketplace offer (e.g. ubuntu-24_04-lts, rockylinux-x86_64)"
+  type        = string
+  default     = "ubuntu-24_04-lts"
+}
+
+variable "source_image_sku" {
+  description = "Marketplace SKU (e.g. server for Canonical Ubuntu LTS, 9-base for Rocky)."
+  type        = string
+  default     = "server"
+}
+
+variable "source_image_version" {
+  description = "Marketplace image version (typically 'latest')"
+  type        = string
+  default     = "latest"
+}

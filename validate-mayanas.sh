@@ -71,14 +71,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLOUD=""
 PROJECT_ID=""
 ZONE=""
-KEY_PAIR_NAME=""
+KEY_PAIR_NAME=""           # derived from --ssh-key basename for AWS
 RESOURCE_GROUP=""
 LOCATION=""
 DEPLOYMENT_NAME="demo"
 SKIP_DEPLOY="false"
 TIER="standard"
 MACHINE_TYPE=""
-BUCKET_COUNT="1"
+CLIENT_MACHINE_TYPE=""      # if empty, derived from MACHINE_TYPE (vCPU count, doubled for HA)
+BUCKET_COUNT=""             # if empty, resolved from tier (basic=2, standard=4, performance=6, ultra=8)
 SKIP_CLIENT="false"
 SSH_PUBLIC_KEY=""
 DESTROY_MODE="false"
@@ -89,7 +90,11 @@ ASSIGN_PUBLIC_IP="true"
 # Tier to machine type mapping
 declare -A GCP_TIERS=( ["basic"]="n2-standard-4" ["standard"]="n2-standard-8" ["performance"]="n2-standard-16" ["ultra"]="n2-standard-32" )
 declare -A AWS_TIERS=( ["basic"]="c6in.xlarge" ["standard"]="c6in.2xlarge" ["performance"]="c6in.4xlarge" ["ultra"]="c6in.8xlarge" )
-declare -A AZURE_TIERS=( ["basic"]="Standard_D4s_v5" ["standard"]="Standard_D8s_v5" ["performance"]="Standard_D16s_v5" ["ultra"]="Standard_D32s_v5" )
+declare -A AZURE_TIERS=( ["basic"]="Standard_D8as_v6" ["standard"]="Standard_D16as_v6" ["performance"]="Standard_D32as_v6" ["ultra"]="Standard_D48as_v6" )
+
+# Tier to default bucket count — bigger machines drive more parallel
+# object-storage streams, so scale buckets with tier. Override with -b/--bucket-count.
+declare -A TIER_BUCKETS=( ["basic"]=1 ["standard"]=2 ["performance"]=4 ["ultra"]=6 )
 
 usage() {
     cat <<EOF
@@ -105,8 +110,9 @@ GCP OPTIONS:
     --zone ZONE               GCP zone (default: us-central1-a)
 
 AWS OPTIONS:
-    --key-pair KEY_PAIR       AWS EC2 Key Pair name (required)
     --zone AZ                 AWS availability zone (optional)
+    (AWS EC2 keypair name is derived from --ssh-key basename:
+     -k ~/.ssh/mykey.pem  →  key_pair_name = "mykey")
 
 AZURE OPTIONS:
     --resource-group RG       Azure resource group name (required)
@@ -116,9 +122,18 @@ COMMON OPTIONS:
     -n, --name NAME           Deployment name (default: demo)
     --cluster TYPE            Cluster type: single, ha (default: single)
     -t, --tier TIER           Performance tier: basic, standard, performance (default: standard)
-    -m, --machine-type TYPE   Override machine type (cloud-specific)
-    -b, --bucket-count COUNT  Number of cloud storage buckets (default: 1)
-    --ssh-key PATH            SSH public key file (default: ~/.ssh/id_rsa.pub)
+    -m, --machine-type TYPE   Override storage machine type (cloud-specific)
+    --client-machine-type TYPE  Override client machine type. Default: derived
+                              from --machine-type vCPU count (doubled for ha
+                              cluster). Pass explicitly when the auto-derived
+                              SKU is capacity-restricted in your region.
+    -b, --bucket-count COUNT  Number of cloud storage buckets
+                              (default: scales with tier — basic=1,
+                              standard=2, performance=4, ultra=6)
+    -k, --ssh-key PATH        SSH key (REQUIRED). Public key (ssh-rsa/...)
+                              or private key (.pem / OpenSSH) — type detected
+                              from file content; for private keys the public
+                              half is derived in-memory via ssh-keygen.
     --spot                    Use spot/preemptible instances (default: on-demand)
     --no-public-ip            Deploy storage nodes with no public IPs.
                               Auto-enables Private Google Access on the
@@ -134,13 +149,15 @@ CLUSTER TYPES:
     ha        High availability (active-active with dual VIPs)
 
 PERFORMANCE TIERS:
-    Tier          GCP              AWS              Azure
-    basic         n2-standard-4    c6in.xlarge      Standard_D4s_v5
-    standard      n2-standard-8    c6in.2xlarge     Standard_D8s_v5
-    performance   n2-standard-16   c6in.4xlarge     Standard_D16s_v5
-    ultra         n2-standard-32   c6in.8xlarge     Standard_D32s_v5
+    Tier          GCP              AWS              Azure (NIC)                  Buckets
+    basic         n2-standard-4    c6in.xlarge      Standard_D8as_v6  (12 Gbps)    1
+    standard      n2-standard-8    c6in.2xlarge     Standard_D16as_v6 (12 Gbps)    2
+    performance   n2-standard-16   c6in.4xlarge     Standard_D32as_v6 (16 Gbps)    4
+    ultra         n2-standard-32   c6in.8xlarge     Standard_D48as_v6 (30 Gbps)    6
 
-    Use --machine-type to override (e.g., n2-standard-48 or n2-standard-64)
+    Use --machine-type to override the machine type, -b to override buckets.
+    Azure uses Das_v6 (AMD v6) — newer capacity, NVMe disk controller. Note
+    D8 and D16 share the same 12 Gbps NIC; tier difference is CPU/RAM only.
 
 EXAMPLES:
     # GCP with standard tier
@@ -179,10 +196,6 @@ while [[ $# -gt 0 ]]; do
             ZONE="$2"
             shift 2
             ;;
-        --key-pair|-k)
-            KEY_PAIR_NAME="$2"
-            shift 2
-            ;;
         --resource-group|-g)
             RESOURCE_GROUP="$2"
             shift 2
@@ -207,11 +220,15 @@ while [[ $# -gt 0 ]]; do
             MACHINE_TYPE="$2"
             shift 2
             ;;
+        --client-machine-type)
+            CLIENT_MACHINE_TYPE="$2"
+            shift 2
+            ;;
         --bucket-count|-b)
             BUCKET_COUNT="$2"
             shift 2
             ;;
-        --ssh-key)
+        --ssh-key|-k)
             SSH_PUBLIC_KEY_FILE="$2"
             shift 2
             ;;
@@ -270,6 +287,9 @@ if [[ ! "$TIER" =~ ^(basic|standard|performance|ultra)$ ]]; then
     exit 1
 fi
 
+# Default BUCKET_COUNT from tier if not set explicitly via -b/--bucket-count.
+[ -z "$BUCKET_COUNT" ] && BUCKET_COUNT="${TIER_BUCKETS[$TIER]}"
+
 # Check prerequisites
 if ! command -v terraform &>/dev/null; then
     fail "terraform not found. Install from https://terraform.io/downloads"
@@ -293,15 +313,58 @@ case "$CLOUD" in
         ZONE="${ZONE:-us-central1-a}"
         SSH_USER="mayanas"
         RESOLVED_MACHINE_TYPE="${MACHINE_TYPE:-${GCP_TIERS[$TIER]}}"
+
+        # GCP pre-flight: Compute Engine API must be enabled (otherwise
+        # terraform fails 5 minutes in). Marketplace agreement acceptance
+        # for VM products is UI-only on GCP — no public API to query or
+        # accept programmatically — so we just print a heads-up that the
+        # customer may need to accept terms via the Marketplace UI if their
+        # org requires it.
+        if ! gcloud services list --enabled --project="$PROJECT_ID" \
+                --filter='config.name=compute.googleapis.com' \
+                --format='value(name)' 2>/dev/null | grep -q compute; then
+            echo
+            echo "ERROR: Compute Engine API not enabled in project $PROJECT_ID"
+            echo
+            echo "Enable with:"
+            echo "  gcloud services enable compute.googleapis.com --project=$PROJECT_ID"
+            echo "Or via Console:"
+            echo "  https://console.cloud.google.com/apis/library/compute.googleapis.com?project=$PROJECT_ID"
+            exit 1
+        fi
         ;;
     aws)
         TF_DIR="$SCRIPT_DIR/aws/mayanas"
-        if [ -z "$KEY_PAIR_NAME" ]; then
-            fail "AWS requires --key-pair"
-            usage
-        fi
         SSH_USER="ec2-user"
         RESOLVED_MACHINE_TYPE="${MACHINE_TYPE:-${AWS_TIERS[$TIER]}}"
+
+        # AWS Marketplace pre-flight: confirm the customer's account has
+        # subscribed to MayaNAS. Without subscription, the data.aws_ami
+        # lookup in aws/mayanas/main.tf returns empty and terraform fails
+        # with "OptInRequired" — gate it here with a clearer message.
+        # Product code matches aws/mayanas/variables.tf:mayanas_product_code.
+        MAYANAS_PRODUCT_CODE="6uq8m459fufly3ohukewdcis1"
+        AWS_REGION_FOR_CHECK=$(aws configure get region 2>/dev/null || echo "us-east-1")
+        if ! aws ec2 describe-images --region "$AWS_REGION_FOR_CHECK" \
+                --owners aws-marketplace \
+                --filters "Name=product-code,Values=$MAYANAS_PRODUCT_CODE" \
+                --query 'Images[0].ImageId' --output text 2>/dev/null \
+                | grep -q '^ami-'; then
+            echo
+            echo "ERROR: AWS Marketplace subscription required for MayaNAS"
+            echo
+            echo "Your AWS account ($(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo unknown))"
+            echo "in region $AWS_REGION_FOR_CHECK does not have MayaNAS subscribed yet."
+            echo
+            echo "To subscribe (one-time, per AWS account):"
+            echo "  1. Visit https://aws.amazon.com/marketplace and search for MayaNAS / ZettaLane"
+            echo "  2. Click 'Continue to Subscribe' → 'Accept Terms'"
+            echo "  3. Wait ~1-2 minutes for the subscription to propagate"
+            echo "  4. Re-run this script"
+            echo
+            echo "Without this, terraform apply will fail with 'OptInRequired'."
+            exit 1
+        fi
         ;;
     azure)
         TF_DIR="$SCRIPT_DIR/azure/mayanas"
@@ -311,6 +374,58 @@ case "$CLOUD" in
         fi
         SSH_USER="azureuser"
         RESOLVED_MACHINE_TYPE="${MACHINE_TYPE:-${AZURE_TIERS[$TIER]}}"
+
+        # Azure Marketplace pre-flight: the module's default falls to the
+        # plan-bound mayanas-cloud-ent listing (azure/mayanas/main.tf:602-619).
+        # Customer's subscription must accept plan terms or terraform apply
+        # fails with "Marketplace purchase eligibility check returned errors".
+        # Hard-coded to match the module's source_image_reference + plan block.
+        # Skip the check when dev-images.sh has injected a no-plan dev image
+        # — those don't go through Marketplace, so terms acceptance is moot.
+        AZURE_PLAN_PUB="zettalane_systems-5254599"
+        AZURE_PLAN_OFFER="mayanas-cloud-ent"
+        AZURE_PLAN_NAME="mayanas-cloud-ent"
+        if grep -q "^# DEV-IMAGE-OVERRIDE-BEGIN$" "$0"; then
+            log "Dev-image override active (no-plan zettalaneDev image) — skipping Marketplace plan-terms check"
+            ACCEPTED="True"
+        else
+            AZURE_SUB_ID_CHECK="${PROJECT_ID:-$(az account show --query id -o tsv 2>/dev/null || echo "")}"
+            ACCEPTED=$(az vm image terms show \
+                --publisher "$AZURE_PLAN_PUB" --offer "$AZURE_PLAN_OFFER" --plan "$AZURE_PLAN_NAME" \
+                ${AZURE_SUB_ID_CHECK:+--subscription "$AZURE_SUB_ID_CHECK"} \
+                --query 'accepted' -o tsv 2>/dev/null || echo "false")
+        fi
+        if [ "$ACCEPTED" != "True" ]; then
+            echo
+            echo "Azure Marketplace plan terms have not been accepted in this subscription."
+            echo
+            echo "  Subscription: ${AZURE_SUB_ID_CHECK:-active}"
+            echo "  Plan:         $AZURE_PLAN_PUB / $AZURE_PLAN_OFFER / $AZURE_PLAN_NAME"
+            echo
+            echo "Accepting the plan terms is a one-time per-subscription step. Without it,"
+            echo "terraform apply will fail with 'Marketplace purchase eligibility check returned errors'."
+            echo
+            read -r -p "Accept terms now? [y/N] " ACCEPT_REPLY
+            case "$ACCEPT_REPLY" in
+                [yY]|[yY][eE][sS])
+                    echo "Running: az vm image terms accept ..."
+                    if ! az vm image terms accept \
+                            --publisher "$AZURE_PLAN_PUB" \
+                            --offer "$AZURE_PLAN_OFFER" \
+                            --plan "$AZURE_PLAN_NAME" \
+                            ${AZURE_SUB_ID_CHECK:+--subscription "$AZURE_SUB_ID_CHECK"} \
+                            >/dev/null; then
+                        fail "az vm image terms accept failed — check Azure CLI auth + permissions"
+                    fi
+                    echo "✓ Terms accepted. Continuing."
+                    ;;
+                *)
+                    fail "Terms not accepted — exiting. Re-run after accepting via:
+       az vm image terms accept --publisher $AZURE_PLAN_PUB \\
+           --offer $AZURE_PLAN_OFFER --plan $AZURE_PLAN_NAME"
+                    ;;
+            esac
+        fi
         ;;
     *)
         fail "Unknown cloud provider: $CLOUD (use gcp, aws, or azure)"
@@ -318,13 +433,63 @@ case "$CLOUD" in
         ;;
 esac
 
-# Load SSH public key
-SSH_PUBLIC_KEY_FILE="${SSH_PUBLIC_KEY_FILE:-$HOME/.ssh/id_rsa.pub}"
-if [ -f "$SSH_PUBLIC_KEY_FILE" ]; then
-    SSH_PUBLIC_KEY=$(cat "$SSH_PUBLIC_KEY_FILE")
+# Resolve --ssh-key into the public-key string. Mandatory. Auto-detects
+# whether the file is a public key (ssh-* / ecdsa-*) or a private key
+# (-----BEGIN ... PRIVATE KEY-----); for private keys the public half is
+# derived in-memory via ssh-keygen -y. SSH_PRIVKEY is set when the input
+# was a private key, used later for ssh -i $SSH_PRIVKEY.
+if [ -z "${SSH_PUBLIC_KEY_FILE:-}" ]; then
+    cat >&2 <<EOF
+ERROR: -k | --ssh-key <path> is required.
+
+Pass any of:
+  Public key (ssh-rsa / ssh-ed25519 / ssh-ecdsa-*) — VM is created with it
+  Private key (.pem / OpenSSH BEGIN ... PRIVATE KEY) — pubkey is derived
+                                                      via ssh-keygen -y
+
+Cloud notes:
+  GCP, Azure  -k <any pub or pem you control>
+              (on GCP, ~/.ssh/google_compute_engine often already exists —
+               gcloud auto-creates it on first \`gcloud compute ssh\`)
+  AWS         -k <your-ec2-keypair>.pem
+              (the keypair must already exist in EC2; its name is derived
+              from the .pem basename — ~/.ssh/foo.pem → key_pair_name "foo")
+EOF
+    exit 1
+fi
+[ -r "$SSH_PUBLIC_KEY_FILE" ] || { fail "--ssh-key: cannot read $SSH_PUBLIC_KEY_FILE"; exit 1; }
+SSH_PRIVKEY=""
+# Use ssh-keygen as the authority on whether this is a private key — handles
+# RSA/OpenSSH/PKCS8 formats, with or without trailing CRLF / BOM. If
+# ssh-keygen -y can derive a public half, it's a private key. Otherwise
+# treat as a public-key file (cat its contents).
+if SSH_PUBLIC_KEY=$(ssh-keygen -y -f "$SSH_PUBLIC_KEY_FILE" 2>/dev/null); then
+    SSH_PRIVKEY="$SSH_PUBLIC_KEY_FILE"
 else
-    warn "SSH public key not found: $SSH_PUBLIC_KEY_FILE"
-    SSH_PUBLIC_KEY=""
+    # Validate it looks like a public key — first whitespace-separated token
+    # should be one of the SSH key-type identifiers.
+    SSH_KEY_TYPE=$(awk 'NR==1{print $1; exit}' "$SSH_PUBLIC_KEY_FILE")
+    case "$SSH_KEY_TYPE" in
+        ssh-rsa|ssh-ed25519|ssh-dss|ssh-ecdsa-*|ecdsa-sha2-*|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-*)
+            SSH_PUBLIC_KEY=$(cat "$SSH_PUBLIC_KEY_FILE")
+            ;;
+        *)
+            fail "--ssh-key: $SSH_PUBLIC_KEY_FILE is not a recognized SSH key file (first token: '$SSH_KEY_TYPE')"
+            exit 1
+            ;;
+    esac
+fi
+[ -n "$SSH_PUBLIC_KEY" ] || { fail "--ssh-key: derived empty public key from $SSH_PUBLIC_KEY_FILE"; exit 1; }
+
+# AWS terraform module needs an existing EC2 keypair name (aws_instance.key_name).
+# Derive it from the private-key basename (e.g. ~/.ssh/mykey.pem → "mykey")
+# so the user just points -k at the .pem they got when creating the keypair.
+if [ "$CLOUD" = "aws" ]; then
+    [ -n "$SSH_PRIVKEY" ] \
+        || { fail "AWS requires --ssh-key to be the .pem private key file (so the EC2 keypair name can be derived from its basename)"; exit 1; }
+    KEY_PAIR_NAME=$(basename "$SSH_PRIVKEY")
+    KEY_PAIR_NAME="${KEY_PAIR_NAME%.pem}"
+    KEY_PAIR_NAME="${KEY_PAIR_NAME%.PEM}"
 fi
 
 cd "$TF_DIR" || { fail "Cannot access terraform directory: $TF_DIR"; exit 1; }
@@ -523,7 +688,11 @@ echo "========================================"
 case "$CLOUD" in
     gcp)   echo " Project:      $PROJECT_ID" ;;
     aws)   echo " Region:       $(aws configure get region 2>/dev/null || echo 'default')" ;;
-    azure) echo " Subscription: $(az account show --query name -o tsv 2>/dev/null || echo 'default')" ;;
+    azure)
+        SUB_ID_FOR_DISPLAY="${PROJECT_ID:-$(az account show --query id -o tsv 2>/dev/null)}"
+        SUB_NAME_FOR_DISPLAY=$(az account list --query "[?id=='$SUB_ID_FOR_DISPLAY'].name | [0]" -o tsv 2>/dev/null || echo "")
+        echo " Subscription: ${SUB_NAME_FOR_DISPLAY:-unknown} ($SUB_ID_FOR_DISPLAY)"
+        ;;
 esac
 echo " Cluster:      $CLUSTER_TYPE"
 echo " Tier:         $TIER"
@@ -557,12 +726,8 @@ machine_type = "$RESOLVED_MACHINE_TYPE"
 bucket_count = $BUCKET_COUNT
 use_spot_vms = $USE_SPOT
 force_destroy_buckets = true
-mayanas_startup_wait = 15
+mayanas_startup_wait = 30
 assign_public_ip = $ASSIGN_PUBLIC_IP
-
-# TODO: REMOVE BEFORE COMMIT - devel image for testing
-source_image_project = "zettalane-dev"
-source_image = "mayanas19-osimage-20260122"
 EOF
             ;;
         aws)
@@ -576,9 +741,6 @@ use_spot_instance = $USE_SPOT
 ssh_cidr_blocks = ["0.0.0.0/0"]
 force_destroy_buckets = true
 assign_public_ip = $ASSIGN_PUBLIC_IP
-
-# TODO: REMOVE BEFORE COMMIT - devel image for testing
-ami_id = "ami-0fb9b36c5ccadb652"
 EOF
             if [ -n "$ZONE" ]; then
                 echo "availability_zone = \"$ZONE\"" >> terraform.tfvars
@@ -586,7 +748,7 @@ EOF
             ;;
         azure)
             # Get subscription ID for image reference
-            AZURE_SUB_ID=$(az account show --query id -o tsv 2>/dev/null || echo "")
+            AZURE_SUB_ID="${PROJECT_ID:-$(az account show --query id -o tsv 2>/dev/null || echo "")}"
             # Default location if not specified
             LOCATION="${LOCATION:-westus}"
             cat > terraform.tfvars <<EOF
@@ -600,10 +762,8 @@ bucket_count = $BUCKET_COUNT
 use_spot_instance = $USE_SPOT
 ssh_cidr_blocks = ["0.0.0.0/0"]
 assign_public_ip = $ASSIGN_PUBLIC_IP
+mayanas_startup_wait = 30
 $([ -n "$SSH_PUBLIC_KEY" ] && echo "ssh_public_key = \"$SSH_PUBLIC_KEY\"")
-
-# TODO: REMOVE BEFORE COMMIT - devel image for testing
-vm_image_id = "/subscriptions/a1374ce4-3087-440a-9af3-674d883c6d3f/resourceGroups/zettalane-dev/providers/Microsoft.Compute/galleries/zettalaneDev/images/mayanas19/versions/latest"
 
 # Performance test share configuration
 shares = [
@@ -706,53 +866,66 @@ VIP=$(get_output vip_address)
 VIP2=$(get_output vip_address_2)
 NODE2_IP=$(get_output node2_public_ip)
 
-# Cloud-specific SSH command
+# Sanitize VIP outputs — Azure module emits human-readable strings like
+# "N/A - Single node deployment" for non-applicable VIPs (single-node
+# deployments). Treat anything that doesn't start with a digit as empty
+# so ${VIP:-$NODE1_INTERNAL_IP} fallback works correctly downstream.
+case "$VIP"  in [0-9]*) ;; *) VIP=""  ;; esac
+case "$VIP2" in [0-9]*) ;; *) VIP2="" ;; esac
+
+# Cloud-specific SSH command. Prefer plain `ssh -i $SSH_PRIVKEY` (fast,
+# direct) whenever a public IP is available and we have the private key.
+# Fall back to `gcloud compute ssh` only for GCP-specific cases that need it
+# (no public IP → IAP tunnel, or pubkey-only input → let gcloud sync via
+# OS Login / metadata).
+SSH_I=""
+[ -n "$SSH_PRIVKEY" ] && SSH_I="-i $SSH_PRIVKEY "
+SSH_USES_GCLOUD=false
+
 case "$CLOUD" in
     gcp)
         NODE1_NAME=$(get_output node1_name)
-        SSH_BASE="gcloud compute ssh mayanas@${NODE1_NAME} --zone=${ZONE} --project=${PROJECT_ID} --quiet --ssh-flag=-o --ssh-flag=StrictHostKeyChecking=no --ssh-flag=-o --ssh-flag=UserKnownHostsFile=/dev/null"
-        # Node2 SSH only for HA deployments
-        if [ -n "$NODE2_IP" ]; then
-            NODE2_NAME=$(get_output node2_name)
-            SSH_BASE_NODE2="gcloud compute ssh mayanas@${NODE2_NAME} --zone=${ZONE} --project=${PROJECT_ID} --quiet --ssh-flag=-o --ssh-flag=StrictHostKeyChecking=no --ssh-flag=-o --ssh-flag=UserKnownHostsFile=/dev/null"
+        [ -n "$NODE2_IP" ] && NODE2_NAME=$(get_output node2_name)
+        if [ "$ASSIGN_PUBLIC_IP" = "true" ] && [ -n "$NODE1_IP" ] && [ -n "$SSH_PRIVKEY" ]; then
+            SSH_BASE="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 ${SSH_I}${SSH_USER}@${NODE1_IP}"
+            [ -n "$NODE2_IP" ] && SSH_BASE_NODE2="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 ${SSH_I}${SSH_USER}@${NODE2_IP}"
+        else
+            SSH_USES_GCLOUD=true
+            IAP_FLAG=""
+            [ "$ASSIGN_PUBLIC_IP" = "false" ] && IAP_FLAG="--tunnel-through-iap"
+            SSH_BASE="gcloud compute ssh ${SSH_USER}@${NODE1_NAME} --zone=${ZONE} --project=${PROJECT_ID} --quiet $IAP_FLAG --ssh-flag=-o --ssh-flag=StrictHostKeyChecking=no --ssh-flag=-o --ssh-flag=UserKnownHostsFile=/dev/null"
+            [ -n "$NODE2_IP" ] && SSH_BASE_NODE2="gcloud compute ssh ${SSH_USER}@${NODE2_NAME} --zone=${ZONE} --project=${PROJECT_ID} --quiet $IAP_FLAG --ssh-flag=-o --ssh-flag=StrictHostKeyChecking=no --ssh-flag=-o --ssh-flag=UserKnownHostsFile=/dev/null"
         fi
         ;;
     aws)
-        if [ -f "$HOME/.ssh/${KEY_PAIR_NAME}.pem" ]; then
-            SSH_BASE="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i $HOME/.ssh/${KEY_PAIR_NAME}.pem ${SSH_USER}@${NODE1_IP}"
-            [ -n "$NODE2_IP" ] && SSH_BASE_NODE2="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i $HOME/.ssh/${KEY_PAIR_NAME}.pem ${SSH_USER}@${NODE2_IP}"
-        else
-            SSH_BASE="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${NODE1_IP}"
-            [ -n "$NODE2_IP" ] && SSH_BASE_NODE2="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${NODE2_IP}"
-        fi
+        SSH_BASE="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_I}${SSH_USER}@${NODE1_IP}"
+        [ -n "$NODE2_IP" ] && SSH_BASE_NODE2="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_I}${SSH_USER}@${NODE2_IP}"
         ;;
     azure)
-        SSH_BASE="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${NODE1_IP}"
-        [ -n "$NODE2_IP" ] && SSH_BASE_NODE2="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${NODE2_IP}"
+        SSH_BASE="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_I}${SSH_USER}@${NODE1_IP}"
+        [ -n "$NODE2_IP" ] && SSH_BASE_NODE2="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_I}${SSH_USER}@${NODE2_IP}"
         VNET_NAME=$(get_output virtual_network_name)
         SUBNET_NAME=$(get_output subnet_name)
-        AZURE_SUB_ID=$(az account show --query id -o tsv 2>/dev/null || echo "")
+        AZURE_SUB_ID="${PROJECT_ID:-$(az account show --query id -o tsv 2>/dev/null || echo "")}"
         ;;
 esac
 
 # NFS server address: use VIP if available, otherwise internal IP
 NFS_SERVER="${VIP:-$NODE1_INTERNAL_IP}"
 
-# SSH helper function
+# SSH helper. The gcloud path takes a command via --command; plain ssh takes
+# it as a positional arg. SSH_USES_GCLOUD selects the form.
 run_ssh() {
-    if [ "$CLOUD" = "gcp" ]; then
+    if [ "$SSH_USES_GCLOUD" = "true" ]; then
         $SSH_BASE --command "$1"
     else
         $SSH_BASE "$1"
     fi
 }
 
-# SSH helper function for node2
 run_ssh_node2() {
-    if [ -z "$SSH_BASE_NODE2" ]; then
-        return 1
-    fi
-    if [ "$CLOUD" = "gcp" ]; then
+    [ -n "$SSH_BASE_NODE2" ] || return 1
+    if [ "$SSH_USES_GCLOUD" = "true" ]; then
         $SSH_BASE_NODE2 --command "$1"
     else
         $SSH_BASE_NODE2 "$1"
@@ -767,11 +940,13 @@ fi
 # Start client deployment in background (while we validate storage)
 CLIENT_DEPLOY_PID=""
 CLIENT_REUSED="false"
-CLIENT_MACHINE_TYPE=""
 if [ "$SKIP_CLIENT" = "false" ]; then
     CLIENT_DIR="$SCRIPT_DIR/$CLOUD/client-testing"
 
-    # Calculate client machine type (display before background deployment)
+    # Calculate client machine type (display before background deployment).
+    # Honor --client-machine-type if user passed one explicitly; otherwise
+    # derive per-cloud from RESOLVED_MACHINE_TYPE (and double for HA).
+    if [ -z "$CLIENT_MACHINE_TYPE" ]; then
     case "$CLOUD" in
         gcp)
             CLIENT_VCPUS=$(echo "$RESOLVED_MACHINE_TYPE" | grep -oE '[0-9]+$')
@@ -782,31 +957,33 @@ if [ "$SKIP_CLIENT" = "false" ]; then
             CLIENT_MACHINE_TYPE="c6in.2xlarge"  # Default AWS client
             ;;
         azure)
-            CLIENT_VCPUS=$(echo "$RESOLVED_MACHINE_TYPE" | grep -oE '[0-9]+')
+            # Pick the FIRST digit run only — Azure VM names like
+            # "Standard_D8as_v6" contain two digit groups (vCPU count and
+            # version suffix); without `head -1` CLIENT_VCPUS would be a
+            # two-line value and break the tfvars heredoc.
+            CLIENT_VCPUS=$(echo "$RESOLVED_MACHINE_TYPE" | grep -oE '[0-9]+' | head -1)
             [ "$CLUSTER_TYPE" = "ha" ] && CLIENT_VCPUS=$((CLIENT_VCPUS * 2))
-            CLIENT_MACHINE_TYPE="Standard_D${CLIENT_VCPUS}s_v5"
+            CLIENT_MACHINE_TYPE="Standard_D${CLIENT_VCPUS}as_v6"
             ;;
     esac
+    fi   # end "if CLIENT_MACHINE_TYPE not pre-set"
 
-    # Check if client already exists and is still running
+    # Always regenerate tfvars so changes (e.g. -n new-name) propagate.
+    # Terraform's own diff handles whether resources need replacement;
+    # if nothing changed, apply is a no-op refresh.
     if [ -f "$CLIENT_DIR/terraform.tfstate" ]; then
-        log "Existing client found ($CLIENT_MACHINE_TYPE) - refreshing in background..."
-        (
-            cd "$CLIENT_DIR" || exit 1
-            # Refresh state and apply to ensure instance exists (spot may have been terminated)
-            terraform apply -auto-approve -refresh=true > "$RESULTS_DIR/client_refresh.log" 2>&1
-        ) &
-        CLIENT_DEPLOY_PID=$!
+        log "Existing client state found — regenerating tfvars + applying in background..."
         CLIENT_REUSED="true"
     else
         log "Starting client deployment in background ($CLIENT_MACHINE_TYPE)..."
-        (
-            cd "$CLIENT_DIR" || exit 1
+    fi
+    (
+        cd "$CLIENT_DIR" || exit 1
 
-            # Generate cloud-specific terraform.tfvars
-            case "$CLOUD" in
-                gcp)
-                    cat > terraform.tfvars <<EOFCLIENT
+        # Generate cloud-specific terraform.tfvars
+        case "$CLOUD" in
+            gcp)
+                cat > terraform.tfvars <<EOFCLIENT
 project_id = "$PROJECT_ID"
 zone = "$ZONE"
 client_name = "${DEPLOYMENT_NAME}-client"
@@ -814,18 +991,18 @@ machine_type = "$CLIENT_MACHINE_TYPE"
 ssh_public_key = "$SSH_PUBLIC_KEY"
 use_spot = $USE_SPOT
 EOFCLIENT
-                    ;;
-                aws)
-                    cat > terraform.tfvars <<EOFCLIENT
+                ;;
+            aws)
+                cat > terraform.tfvars <<EOFCLIENT
 key_pair_name = "$KEY_PAIR_NAME"
 client_name = "${DEPLOYMENT_NAME}-client"
 instance_type = "$CLIENT_MACHINE_TYPE"
 ssh_public_key = "$SSH_PUBLIC_KEY"
 use_spot = $USE_SPOT
 EOFCLIENT
-                    ;;
-                azure)
-                    cat > terraform.tfvars <<EOFCLIENT
+                ;;
+            azure)
+                cat > terraform.tfvars <<EOFCLIENT
 subscription_id = "$AZURE_SUB_ID"
 resource_group_name = "$RESOURCE_GROUP"
 location = "$LOCATION"
@@ -836,14 +1013,13 @@ vnet_name = "$VNET_NAME"
 subnet_name = "$SUBNET_NAME"
 use_spot = $USE_SPOT
 EOFCLIENT
-                    ;;
-            esac
+                ;;
+        esac
 
-            terraform init -upgrade > "$RESULTS_DIR/client_init.log" 2>&1 || terraform init > "$RESULTS_DIR/client_init.log" 2>&1
-            terraform apply -auto-approve > "$RESULTS_DIR/client_apply.log" 2>&1
-        ) &
-        CLIENT_DEPLOY_PID=$!
-    fi
+        terraform init -upgrade > "$RESULTS_DIR/client_init.log" 2>&1 || terraform init > "$RESULTS_DIR/client_init.log" 2>&1
+        terraform apply -auto-approve -refresh=true > "$RESULTS_DIR/client_apply.log" 2>&1
+    ) &
+    CLIENT_DEPLOY_PID=$!
 fi
 
 echo ""
@@ -887,7 +1063,7 @@ fi
 
 # Test 2: Wait for MayaNAS cluster setup
 log "Test 2: Waiting for MayaNAS cluster setup..."
-MAX_WAIT=300
+MAX_WAIT=600   # cluster_setup2.sh on Azure with spot + dynamic disk attach often runs ~7-8 min
 WAIT_INTERVAL=15
 ELAPSED=0
 CLUSTER_READY=false
@@ -992,21 +1168,22 @@ fi
 if [ "$SKIP_CLIENT" = "false" ]; then
     echo ""
 
-    # Get client IP - either from reused deployment or wait for new one
-    if [ "$CLIENT_REUSED" = "true" ]; then
-        cd "$CLIENT_DIR"
-        CLIENT_IP=$(terraform output -raw client_public_ip 2>/dev/null)
-        cd "$TF_DIR"
-        success "Client reused: $CLIENT_IP"
-    elif [ -n "$CLIENT_DEPLOY_PID" ]; then
+    # Always wait for the background terraform apply to finish — even in
+    # the "reused" case, my refactor regenerates tfvars and runs apply,
+    # which can take minutes if the image changed (forces VM replacement).
+    # Reading client_public_ip before the apply completes returns either
+    # an empty string or the *previous* IP (stale).
+    if [ -n "$CLIENT_DEPLOY_PID" ]; then
         log "Waiting for client deployment to complete..."
         if wait $CLIENT_DEPLOY_PID; then
             cd "$CLIENT_DIR"
             CLIENT_IP=$(terraform output -raw client_public_ip 2>/dev/null)
             cd "$TF_DIR"
-            success "Client deployed: $CLIENT_IP"
-            log "Waiting for client SSH to be ready..."
-            sleep 30
+            if [ "$CLIENT_REUSED" = "true" ]; then
+                success "Client reused: $CLIENT_IP"
+            else
+                success "Client deployed: $CLIENT_IP"
+            fi
         else
             warn "Client deployment failed - see $RESULTS_DIR/client_apply.log"
             CLIENT_IP=""
@@ -1015,21 +1192,58 @@ if [ "$SKIP_CLIENT" = "false" ]; then
 
     if [ -n "$CLIENT_IP" ]; then
 
-            CLIENT_SSH="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 mayanas@${CLIENT_IP}"
+            CLIENT_SSH_I=""
+            [ -n "${SSH_PRIVKEY:-}" ] && CLIENT_SSH_I="-i $SSH_PRIVKEY "
+            CLIENT_SSH="ssh ${CLIENT_SSH_I}-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 mayanas@${CLIENT_IP}"
+
+            # Wait for sshd to come up. Fresh GCP VMs often need 60-120s
+            # before sshd accepts connections (cloud-init / first-boot).
+            log "Waiting for client sshd at ${CLIENT_IP}..."
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+                if $CLIENT_SSH "echo ready" >/dev/null 2>&1; then
+                    log "  client sshd ready (attempt $attempt)"
+                    break
+                fi
+                if [ "$attempt" -eq 10 ]; then
+                    warn "client sshd never came up at ${CLIENT_IP}; skipping client tests"
+                    CLIENT_IP=""
+                    break
+                fi
+                sleep 15
+            done
 
             # Test 6: Copy and run NFS performance test
             log "Test 6: Running NFS performance test..."
             NFS_SCRIPT="$SCRIPT_DIR/nfs-performance-test.sh"
 
-            # Get NFS test shares from terraform output
-            NFS_TEST_SHARES=$(cd "$TF_DIR" && terraform output -json nfs_test_shares 2>/dev/null | jq -r '.[]' 2>/dev/null | tr '\n' ' ' || echo "")
+            # Pull the structured share list from the storage module's
+            # share_mount_instructions output. This is the same approach the
+            # internal validate-mayanas.sh uses; it works across single /
+            # active-passive / active-active and avoids brittle SSH+exportfs
+            # parsing.
+            SHARE_INFO=$(cd "$TF_DIR" && terraform output -json share_mount_instructions 2>/dev/null || echo "")
+            NFS_SHARES=()
+            if [ -n "$SHARE_INFO" ] && [ "$SHARE_INFO" != "null" ]; then
+                if [ "$DEPLOYMENT_TYPE" = "active-active" ]; then
+                    NODES_TO_SCAN="node1 node2"
+                else
+                    NODES_TO_SCAN="node1"
+                fi
+                for node in $NODES_TO_SCAN; do
+                    for share_name in $(echo "$SHARE_INFO" | jq -r ".shares.${node} // {} | keys[]" 2>/dev/null); do
+                        nfs_mount=$(echo "$SHARE_INFO" | jq -r ".shares.${node}[\"$share_name\"].nfs_mount // \"\"" 2>/dev/null)
+                        zpool=$(echo "$SHARE_INFO" | jq -r ".shares.${node}[\"$share_name\"].zpool // \"\"" 2>/dev/null)
+                        # Active-active uses .vip; single/active-passive uses .server_ip.
+                        host=$(echo "$SHARE_INFO" | jq -r ".shares.${node}[\"$share_name\"].vip // .shares.${node}[\"$share_name\"].server_ip // \"\"" 2>/dev/null)
+                        if [ -n "$nfs_mount" ] && [ -n "$host" ] && [ -n "$zpool" ]; then
+                            NFS_SHARES+=("${host}:/${zpool}/${share_name}")
+                        fi
+                    done
+                done
+            fi
+            NFS_TEST_SHARES="${NFS_SHARES[*]}"
 
             if [ -z "$NFS_TEST_SHARES" ]; then
-                # Fallback to exportfs if terraform output not available
-                NFS_TEST_SHARES="${NFS_SERVER}:${NFS_EXPORT}"
-            fi
-
-            if [ -z "$NFS_TEST_SHARES" ] || [ "$NFS_TEST_SHARES" = " " ]; then
                 warn "No NFS shares available - skipping NFS performance test"
             elif [ -f "$NFS_SCRIPT" ]; then
                 # Copy test script to client

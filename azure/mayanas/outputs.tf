@@ -149,6 +149,11 @@ output "subnet_name" {
   value       = var.subnet_name != "" ? var.subnet_name : azurerm_subnet.mayanas[0].name
 }
 
+output "vnet_name" {
+  description = "Name of the virtual network (so external modules — e.g. client-testing — can colocate)"
+  value       = var.vnet_name != "" ? var.vnet_name : azurerm_virtual_network.mayanas[0].name
+}
+
 output "network_security_group_id" {
   description = "ID of the network security group"
   value       = azurerm_network_security_group.mayanas.id
@@ -358,3 +363,25 @@ output "share_mount_instructions" {
   }
 }
 
+
+
+# Lustre Protocol Information
+output "lustre_mount_command" {
+  description = "Command to mount Lustre filesystem from client"
+  value       = var.enable_lustre && var.deployment_type != "single" ? "mount -t lustre ${local.vip_address_final}@tcp:/${var.fsname} /mnt/lustre" : null
+}
+
+output "lustre_fsname" {
+  description = "Lustre filesystem name"
+  value       = var.enable_lustre ? var.fsname : null
+}
+
+output "lustre_mgs_nid" {
+  description = "Lustre MGS NID (VIP-based, survives MGS/MDS failover)"
+  value       = var.enable_lustre && var.deployment_type != "single" ? "${local.vip_address_final}@tcp" : null
+}
+
+output "lustre_mount_point" {
+  description = "Lustre mount point (matches Google Managed Lustre format)"
+  value       = var.enable_lustre && var.deployment_type != "single" ? "${local.vip_address_final}@tcp:/${var.fsname}" : null
+}

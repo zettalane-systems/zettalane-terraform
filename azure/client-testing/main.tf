@@ -24,6 +24,22 @@ data "azurerm_subnet" "main" {
   resource_group_name  = var.resource_group_name
 }
 
+# Auto-accept Marketplace plan terms for images that require it (Rocky/RESF,
+# RedHat, SUSE, etc.). Canonical's free Ubuntu images don't carry plan
+# information, so attempting to accept terms for them errors with "no plans
+# found"; skip the resource entirely for Canonical. Other free-tier
+# publishers without plans can be added to the exclusion list as needed.
+locals {
+  needs_plan = !contains(["Canonical"], var.source_image_publisher)
+}
+
+resource "azurerm_marketplace_agreement" "client_image" {
+  count     = local.needs_plan ? 1 : 0
+  publisher = var.source_image_publisher
+  offer     = var.source_image_offer
+  plan      = var.source_image_sku
+}
+
 resource "azurerm_public_ip" "client" {
   name                = "${var.client_name}-pip"
   location            = data.azurerm_resource_group.main.location
@@ -89,11 +105,28 @@ resource "azurerm_linux_virtual_machine" "client" {
     storage_account_type = "Premium_LRS"
   }
 
+  # Rocky Linux 9 (resf publisher) — chosen because Whamcloud's Lustre 2.17
+  # DKMS package builds cleanly against its kernel. Override per-deployment
+  # via the source_image_* variables if you need Ubuntu / RHEL / etc.
   source_image_reference {
-    publisher = "Canonical"
-    offer     = "ubuntu-24_04-lts"
-    sku       = "server"
-    version   = "latest"
+    publisher = var.source_image_publisher
+    offer     = var.source_image_offer
+    sku       = var.source_image_sku
+    version   = var.source_image_version
+  }
+
+  # Marketplace plan info — required by Azure when source_image_reference
+  # points at any Marketplace image with plan info (RESF Rocky, RedHat, SUSE).
+  # Canonical's free Ubuntu images don't carry plan info, so the block must
+  # be omitted in that case (passing publisher="Canonical" here errors with
+  # "Plan information is not allowed").
+  dynamic "plan" {
+    for_each = local.needs_plan ? [1] : []
+    content {
+      publisher = var.source_image_publisher
+      product   = var.source_image_offer
+      name      = var.source_image_sku
+    }
   }
 
   priority        = var.use_spot ? "Spot" : "Regular"
@@ -103,4 +136,10 @@ resource "azurerm_linux_virtual_machine" "client" {
     ssh_public_key = var.ssh_public_key
     admin_username = var.admin_username
   }))
+
+  # depends_on only matters when the agreement resource is created (count=1).
+  # When count=0 the list is empty and depends_on is a no-op.
+  depends_on = [
+    azurerm_marketplace_agreement.client_image,
+  ]
 }

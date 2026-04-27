@@ -283,6 +283,18 @@ export MAYANAS_DEPLOYMENT_TYPE="${deployment_type}"
 export MAYANAS_CLOUD_PROVIDER="azure"
 export MAYANAS_REGION="$REGION"
 export MAYANAS_PROJECT_ID="$RESOURCE_GROUP_NAME"  # Azure equivalent of GCP PROJECT_ID - required for all deployments
+%{ if mayanas_startup_wait != "" ~}
+export MAYANAS_STARTUP_WAIT="${mayanas_startup_wait}"
+%{ endif ~}
+%{ if enable_lustre ~}
+
+# Lustre protocol configuration
+export MAYANAS_ENABLE_LUSTRE="true"
+export MAYANAS_LUSTRE_FSNAME="${lustre_fsname}"
+export MAYANAS_LUSTRE_DOM_THRESHOLD="${lustre_dom_threshold}"
+# MDT disk name (used by cluster_setup2.sh to find the disk via Azure IMDS)
+export MAYANAS_LUSTRE_MDT_DISK="${lustre_mdt_disk_name}"
+%{ endif ~}
 
 %{ if deployment_type == "single" ~}
 # Single node - credentials already configured above
@@ -399,6 +411,15 @@ fi
 export MAYANAS_S3_ACCESS_KEY="$S3_ACCESS_KEY"
 export MAYANAS_S3_SECRET_KEY="$STORAGE_ACCESS_KEY"
 export MAYANAS_PROJECT_ID="$RESOURCE_GROUP_NAME"  # Azure equivalent of GCP PROJECT_ID
+%{ if enable_lustre ~}
+
+# Lustre protocol configuration
+export MAYANAS_ENABLE_LUSTRE="true"
+export MAYANAS_LUSTRE_FSNAME="${lustre_fsname}"
+export MAYANAS_LUSTRE_DOM_THRESHOLD="${lustre_dom_threshold}"
+# MDT disk name (used by cluster_setup2.sh to find the disk via Azure IMDS)
+export MAYANAS_LUSTRE_MDT_DISK="${lustre_mdt_disk_name}"
+%{ endif ~}
 
 # Network configuration
 export MAYANAS_EXTERNAL_IP="$EXTERNAL_IP"
@@ -458,6 +479,10 @@ export MAYANAS_METADATA_DISK="${metadata_disk_names}"
 %{ endif ~}
 export MAYANAS_S3_BUCKET_NAMES="${bucket_names}"
 export MAYANAS_METADATA_DISK_NAMES="${metadata_disk_names}"
+# Per-node bucket count + size — needed by cluster_setup2.sh to slice
+# MAYANAS_S3_BUCKET[node*BUCKET_COUNT..(node+1)*BUCKET_COUNT-1] per node.
+export MAYANAS_BUCKET_COUNT="${bucket_count}"
+export MAYANAS_S3_BUCKET_SIZE="${storage_size_gb}G"
 
 # Shares configuration
 export MAYANAS_SHARES_CONFIG='${shares}'
@@ -466,6 +491,15 @@ export MAYANAS_SHARES_CONFIG='${shares}'
 export MAYANAS_S3_ACCESS_KEY="${s3_access_key}"
 export MAYANAS_S3_SECRET_KEY="$STORAGE_ACCESS_KEY"
 export MAYANAS_PROJECT_ID="$RESOURCE_GROUP_NAME"  # Azure equivalent of GCP PROJECT_ID
+%{ if enable_lustre ~}
+
+# Lustre protocol configuration
+export MAYANAS_ENABLE_LUSTRE="true"
+export MAYANAS_LUSTRE_FSNAME="${lustre_fsname}"
+export MAYANAS_LUSTRE_DOM_THRESHOLD="${lustre_dom_threshold}"
+# MDT disk name (used by cluster_setup2.sh to find the disk via Azure IMDS)
+export MAYANAS_LUSTRE_MDT_DISK="${lustre_mdt_disk_name}"
+%{ endif ~}
 
 # Network configuration
 export MAYANAS_EXTERNAL_IP="$EXTERNAL_IP"

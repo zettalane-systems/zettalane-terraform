@@ -12,11 +12,14 @@ set -e
 install_nvme_packages() {
     echo "Checking NVMe-oF client prerequisites..."
 
+    # Suppress debconf TTY warnings (script is run via ssh non-interactively).
+    export DEBIAN_FRONTEND=noninteractive
+
     # Check for nvme-cli
     if ! command -v nvme &>/dev/null; then
         echo "Installing nvme-cli..."
-        sudo apt-get update -qq >/dev/null
-        sudo apt-get install -qq -y nvme-cli jq >/dev/null
+        sudo -E apt-get update -qq >/dev/null
+        sudo -E apt-get install -qq -y nvme-cli jq >/dev/null
     fi
 
     # Check for nvme-tcp kernel module
@@ -24,8 +27,8 @@ install_nvme_packages() {
         echo "Loading nvme-tcp kernel module..."
         if ! sudo modprobe nvme-tcp 2>/dev/null; then
             echo "Installing linux-modules-extra for nvme-tcp support..."
-            sudo apt-get update -qq >/dev/null
-            sudo apt-get install -qq -y linux-modules-extra-$(uname -r) >/dev/null
+            sudo -E apt-get update -qq >/dev/null
+            sudo -E apt-get install -qq -y linux-modules-extra-$(uname -r) >/dev/null
             sudo modprobe nvme-tcp
         fi
     fi

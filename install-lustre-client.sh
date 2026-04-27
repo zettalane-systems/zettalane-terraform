@@ -77,9 +77,43 @@ EOF
             || log "WARN: could not enable CRB/powertools — libyaml-devel may fail"
         log "Installing epel-release"
         dnf install -y epel-release                    || fail "epel-release install failed"
-        log "Installing kernel-devel + build deps for $(uname -r)"
-        dnf install -y "kernel-devel-$(uname -r)" kernel-headers libyaml-devel \
-                       gcc make dkms elfutils-libelf-devel \
+        # DKMS needs kernel-devel matching $(uname -r) EXACTLY. Install it
+        # explicitly — and pin the version — before any later dnf step pulls
+        # `dkms`/`lustre-client-dkms`, since those have an unversioned
+        # `Requires: kernel-devel` that would otherwise resolve to the head
+        # kernel-devel in appstream (e.g. el9_7) and contaminate DKMS builds.
+        #
+        # Lookup chain, cheapest first:
+        #   1. active appstream      — same point release, current kernel.
+        #   2. --enablerepo=devel    — same point release, older kernel still
+        #                              retained in Rocky's devel repo.
+        #   3. vault devel sub-repo  — older point release (image is el9_X
+        #                              while appstream is now el9_(X+1)).
+        #   4. head kernel + reboot  — last resort if vault lookup also fails.
+        KVER=$(uname -r)
+        # Match any el<MAJOR>_<MINOR> tag (Rocky 9, 10, …). `|| true` keeps
+        # the pipeline non-fatal under set -euo pipefail when the regex
+        # doesn't match (e.g. unusual kernel naming) — EL_PT just stays
+        # empty and the vault step is skipped.
+        EL_PT=$(echo "$KVER" | grep -oE 'el[0-9]+_[0-9]+' | sed -E 's/el([0-9]+)_/\1./' || true)
+        VAULT_DEVEL="https://dl.rockylinux.org/vault/rocky/${EL_PT}/devel/x86_64/os/"
+        log "Installing kernel-devel-$KVER (must match running kernel exactly)"
+        if dnf install -y "kernel-devel-$KVER" 2>/dev/null; then
+            log "  → resolved from active appstream"
+        elif dnf --enablerepo=devel install -y "kernel-devel-$KVER" 2>/dev/null; then
+            log "  → resolved from devel repo"
+        elif [ -n "$EL_PT" ] && dnf install -y --nogpgcheck \
+                --repofrompath="rocky-vault-devel,$VAULT_DEVEL" \
+                "kernel-devel-$KVER" 2>/dev/null; then
+            log "  → resolved from vault devel ($VAULT_DEVEL)"
+        else
+            log "kernel-devel-$KVER unavailable in active appstream / devel / vault"
+            log "Refusing to proceed — DKMS would build for the wrong kernel"
+            log "Treating this client as bring-your-own-client (BYOC); see deploy-lustre.sh output for instructions"
+            exit 100
+        fi
+        log "Installing build deps for $(uname -r)"
+        dnf install -y kernel-headers libyaml-devel gcc make dkms elfutils-libelf-devel \
             || log "WARN: some DKMS build deps missing; install may still succeed"
         log "Installing lustre-client-dkms + userspace tools"
         dnf install -y lustre-client-dkms lustre-client

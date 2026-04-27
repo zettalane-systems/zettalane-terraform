@@ -71,7 +71,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLOUD=""
 PROJECT_ID=""
 ZONE=""
-KEY_PAIR_NAME=""
+KEY_PAIR_NAME=""           # derived from --ssh-key basename for AWS
 RESOURCE_GROUP=""
 LOCATION=""
 DEPLOYMENT_NAME="demo"
@@ -212,8 +212,9 @@ GCP OPTIONS:
     --zone ZONE               GCP zone (default: us-central1-a)
 
 AWS OPTIONS:
-    --key-pair KEY_PAIR       AWS EC2 Key Pair name (required)
     --zone AZ                 AWS availability zone (optional)
+    (AWS EC2 keypair name is derived from --ssh-key basename:
+     -k ~/.ssh/mykey.pem  →  key_pair_name = "mykey")
 
 AZURE OPTIONS:
     --resource-group RG       Azure resource group name (required)
@@ -224,7 +225,10 @@ COMMON OPTIONS:
     -o, --policy POLICY       Performance policy (default: zonal-standard-performance)
     -m, --machine-type TYPE   Override storage machine type (cloud-specific)
     --client-machine-type TYPE  Override client machine type (cloud-specific)
-    --ssh-key PATH            SSH public key file (default: ~/.ssh/id_rsa.pub)
+    -k, --ssh-key PATH        SSH key (REQUIRED). Public key (ssh-rsa/...)
+                              or private key (.pem / OpenSSH) — type detected
+                              from file content; for private keys the public
+                              half is derived in-memory via ssh-keygen.
     --spot                    Use spot/preemptible instances (default: on-demand)
     --no-public-ip            Deploy storage nodes with no public IPs.
                               Auto-enables Private Google Access on the
@@ -249,8 +253,8 @@ EXAMPLES:
     # GCP with medium performance
     $0 --cloud gcp --project-id my-project --zone us-central1-a
 
-    # AWS with high performance
-    $0 --cloud aws --key-pair my-keypair -o zonal-high-performance
+    # AWS with high performance (keypair name = "my-keypair")
+    $0 --cloud aws -k ~/.ssh/my-keypair.pem -o zonal-high-performance
 
     # Azure with ultra performance
     $0 --cloud azure --resource-group mayascale-rg --location eastus -o zonal-ultra-performance
@@ -279,10 +283,6 @@ while [[ $# -gt 0 ]]; do
             ZONE="$2"
             shift 2
             ;;
-        --key-pair|-k)
-            KEY_PAIR_NAME="$2"
-            shift 2
-            ;;
         --resource-group|-g)
             RESOURCE_GROUP="$2"
             shift 2
@@ -307,7 +307,7 @@ while [[ $# -gt 0 ]]; do
             CLIENT_MACHINE_TYPE="$2"
             shift 2
             ;;
-        --ssh-key)
+        --ssh-key|-k)
             SSH_PUBLIC_KEY_FILE="$2"
             shift 2
             ;;
@@ -383,15 +383,65 @@ case "$CLOUD" in
         ZONE="${ZONE:-us-central1-a}"
         SSH_USER="mayascale"
         RESOLVED_MACHINE_TYPE="${MACHINE_TYPE:-${GCP_POLICIES[$POLICY]}}"
+
+        # GCP pre-flight: Compute Engine API must be enabled (otherwise
+        # terraform fails 5 minutes in). Marketplace agreement acceptance
+        # for VM products is UI-only on GCP — no public API to query or
+        # accept programmatically — so we just print a heads-up.
+        if ! gcloud services list --enabled --project="$PROJECT_ID" \
+                --filter='config.name=compute.googleapis.com' \
+                --format='value(name)' 2>/dev/null | grep -q compute; then
+            echo
+            echo "ERROR: Compute Engine API not enabled in project $PROJECT_ID"
+            echo
+            echo "Enable with:"
+            echo "  gcloud services enable compute.googleapis.com --project=$PROJECT_ID"
+            echo "Or via Console:"
+            echo "  https://console.cloud.google.com/apis/library/compute.googleapis.com?project=$PROJECT_ID"
+            exit 1
+        fi
         ;;
     aws)
         TF_DIR="$SCRIPT_DIR/aws/mayascale"
-        if [ -z "$KEY_PAIR_NAME" ]; then
-            fail "AWS requires --key-pair"
-            usage
-        fi
         SSH_USER="ec2-user"
         RESOLVED_MACHINE_TYPE="${MACHINE_TYPE:-${AWS_POLICIES[$POLICY]}}"
+
+        # AWS Marketplace pre-flight: confirm the customer's account has
+        # subscribed to MayaScale. Without subscription, the data.aws_ami
+        # lookup in aws/mayascale/main.tf returns empty and terraform fails
+        # with "OptInRequired" — gate it here with a clearer message.
+        # Product code matches aws/mayascale/variables.tf:mayascale_product_code.
+        # Skip the check if the variable still holds the placeholder (means
+        # MayaScale isn't published to AWS Marketplace yet).
+        MAYASCALE_PRODUCT_CODE="PLACEHOLDER_MAYASCALE_PRODUCT_CODE"
+        if [ "$MAYASCALE_PRODUCT_CODE" = "PLACEHOLDER_MAYASCALE_PRODUCT_CODE" ]; then
+            echo "WARN: MayaScale isn't published on AWS Marketplace yet"
+            echo "      (mayascale_product_code is still a placeholder in"
+            echo "       aws/mayascale/variables.tf). data.aws_ami will return"
+            echo "       empty unless you set ami_id explicitly. Continuing anyway."
+        else
+            AWS_REGION_FOR_CHECK=$(aws configure get region 2>/dev/null || echo "us-east-1")
+            if ! aws ec2 describe-images --region "$AWS_REGION_FOR_CHECK" \
+                    --owners aws-marketplace \
+                    --filters "Name=product-code,Values=$MAYASCALE_PRODUCT_CODE" \
+                    --query 'Images[0].ImageId' --output text 2>/dev/null \
+                    | grep -q '^ami-'; then
+                echo
+                echo "ERROR: AWS Marketplace subscription required for MayaScale"
+                echo
+                echo "Your AWS account ($(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo unknown))"
+                echo "in region $AWS_REGION_FOR_CHECK does not have MayaScale subscribed yet."
+                echo
+                echo "To subscribe (one-time, per AWS account):"
+                echo "  1. Visit https://aws.amazon.com/marketplace and search for MayaScale / ZettaLane"
+                echo "  2. Click 'Continue to Subscribe' → 'Accept Terms'"
+                echo "  3. Wait ~1-2 minutes for the subscription to propagate"
+                echo "  4. Re-run this script"
+                echo
+                echo "Without this, terraform apply will fail with 'OptInRequired'."
+                exit 1
+            fi
+        fi
         ;;
     azure)
         TF_DIR="$SCRIPT_DIR/azure/mayascale"
@@ -402,6 +452,59 @@ case "$CLOUD" in
         SSH_USER="azureuser"
         LOCATION="${LOCATION:-westus}"
         RESOLVED_MACHINE_TYPE="${MACHINE_TYPE:-${AZURE_POLICIES[$POLICY]}}"
+
+        # Azure Marketplace pre-flight: the module's default falls to the
+        # plan-bound mayascale-cloud-ent listing (azure/mayascale/main.tf:
+        # 742-758). Customer's subscription must accept plan terms or
+        # terraform apply fails with "Marketplace purchase eligibility check
+        # returned errors". Hard-coded to match the module's
+        # source_image_reference + plan block.
+        # Skip the check when dev-images.sh has injected a no-plan dev image
+        # — those don't go through Marketplace, so terms acceptance is moot.
+        AZURE_PLAN_PUB="zettalane_systems-5254599"
+        AZURE_PLAN_OFFER="mayascale-cloud-ent"
+        AZURE_PLAN_NAME="mayascale-cloud-ent"
+        if grep -q "^# DEV-IMAGE-OVERRIDE-BEGIN$" "$0"; then
+            log "Dev-image override active (no-plan zettalaneDev image) — skipping Marketplace plan-terms check"
+            ACCEPTED="True"
+        else
+            AZURE_SUB_ID_CHECK="${PROJECT_ID:-$(az account show --query id -o tsv 2>/dev/null || echo "")}"
+            ACCEPTED=$(az vm image terms show \
+                --publisher "$AZURE_PLAN_PUB" --offer "$AZURE_PLAN_OFFER" --plan "$AZURE_PLAN_NAME" \
+                ${AZURE_SUB_ID_CHECK:+--subscription "$AZURE_SUB_ID_CHECK"} \
+                --query 'accepted' -o tsv 2>/dev/null || echo "false")
+        fi
+        if [ "$ACCEPTED" != "True" ]; then
+            echo
+            echo "Azure Marketplace plan terms have not been accepted in this subscription."
+            echo
+            echo "  Subscription: ${AZURE_SUB_ID_CHECK:-active}"
+            echo "  Plan:         $AZURE_PLAN_PUB / $AZURE_PLAN_OFFER / $AZURE_PLAN_NAME"
+            echo
+            echo "Accepting the plan terms is a one-time per-subscription step. Without it,"
+            echo "terraform apply will fail with 'Marketplace purchase eligibility check returned errors'."
+            echo
+            read -r -p "Accept terms now? [y/N] " ACCEPT_REPLY
+            case "$ACCEPT_REPLY" in
+                [yY]|[yY][eE][sS])
+                    echo "Running: az vm image terms accept ..."
+                    if ! az vm image terms accept \
+                            --publisher "$AZURE_PLAN_PUB" \
+                            --offer "$AZURE_PLAN_OFFER" \
+                            --plan "$AZURE_PLAN_NAME" \
+                            ${AZURE_SUB_ID_CHECK:+--subscription "$AZURE_SUB_ID_CHECK"} \
+                            >/dev/null; then
+                        fail "az vm image terms accept failed — check Azure CLI auth + permissions"
+                    fi
+                    echo "✓ Terms accepted. Continuing."
+                    ;;
+                *)
+                    fail "Terms not accepted — exiting. Re-run after accepting via:
+       az vm image terms accept --publisher $AZURE_PLAN_PUB \\
+           --offer $AZURE_PLAN_OFFER --plan $AZURE_PLAN_NAME"
+                    ;;
+            esac
+        fi
         ;;
     *)
         fail "Unknown cloud provider: $CLOUD (use gcp, aws, or azure)"
@@ -409,13 +512,59 @@ case "$CLOUD" in
         ;;
 esac
 
-# Load SSH public key
-SSH_PUBLIC_KEY_FILE="${SSH_PUBLIC_KEY_FILE:-$HOME/.ssh/id_rsa.pub}"
-if [ -f "$SSH_PUBLIC_KEY_FILE" ]; then
-    SSH_PUBLIC_KEY=$(cat "$SSH_PUBLIC_KEY_FILE")
+# Resolve --ssh-key into the public-key string. Mandatory. Auto-detects
+# whether the file is a public key (ssh-* / ecdsa-*) or a private key
+# (-----BEGIN ... PRIVATE KEY-----); for private keys the public half is
+# derived in-memory via ssh-keygen -y. SSH_PRIVKEY is set when the input
+# was a private key, used later for ssh -i $SSH_PRIVKEY.
+if [ -z "${SSH_PUBLIC_KEY_FILE:-}" ]; then
+    cat >&2 <<EOF
+ERROR: -k | --ssh-key <path> is required.
+
+Pass any of:
+  Public key (ssh-rsa / ssh-ed25519 / ssh-ecdsa-*) — VM is created with it
+  Private key (.pem / OpenSSH BEGIN ... PRIVATE KEY) — pubkey is derived
+                                                      via ssh-keygen -y
+
+Cloud notes:
+  GCP, Azure  -k <any pub or pem you control>
+              (on GCP, ~/.ssh/google_compute_engine often already exists —
+               gcloud auto-creates it on first \`gcloud compute ssh\`)
+  AWS         -k <your-ec2-keypair>.pem
+              (the keypair must already exist in EC2; its name is derived
+              from the .pem basename — ~/.ssh/foo.pem → key_pair_name "foo")
+EOF
+    exit 1
+fi
+[ -r "$SSH_PUBLIC_KEY_FILE" ] || { fail "--ssh-key: cannot read $SSH_PUBLIC_KEY_FILE"; exit 1; }
+SSH_PRIVKEY=""
+# Use ssh-keygen as the authority on whether this is a private key — handles
+# RSA/OpenSSH/PKCS8 formats, with or without trailing CRLF / BOM.
+if SSH_PUBLIC_KEY=$(ssh-keygen -y -f "$SSH_PUBLIC_KEY_FILE" 2>/dev/null); then
+    SSH_PRIVKEY="$SSH_PUBLIC_KEY_FILE"
 else
-    warn "SSH public key not found: $SSH_PUBLIC_KEY_FILE"
-    SSH_PUBLIC_KEY=""
+    SSH_KEY_TYPE=$(awk 'NR==1{print $1; exit}' "$SSH_PUBLIC_KEY_FILE")
+    case "$SSH_KEY_TYPE" in
+        ssh-rsa|ssh-ed25519|ssh-dss|ssh-ecdsa-*|ecdsa-sha2-*|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-*)
+            SSH_PUBLIC_KEY=$(cat "$SSH_PUBLIC_KEY_FILE")
+            ;;
+        *)
+            fail "--ssh-key: $SSH_PUBLIC_KEY_FILE is not a recognized SSH key file (first token: '$SSH_KEY_TYPE')"
+            exit 1
+            ;;
+    esac
+fi
+[ -n "$SSH_PUBLIC_KEY" ] || { fail "--ssh-key: derived empty public key from $SSH_PUBLIC_KEY_FILE"; exit 1; }
+
+# AWS terraform module needs an existing EC2 keypair name (aws_instance.key_name).
+# Derive it from the private-key basename (e.g. ~/.ssh/mykey.pem → "mykey")
+# so the user just points -k at the .pem they got when creating the keypair.
+if [ "$CLOUD" = "aws" ]; then
+    [ -n "$SSH_PRIVKEY" ] \
+        || { fail "AWS requires --ssh-key to be the .pem private key file (so the EC2 keypair name can be derived from its basename)"; exit 1; }
+    KEY_PAIR_NAME=$(basename "$SSH_PRIVKEY")
+    KEY_PAIR_NAME="${KEY_PAIR_NAME%.pem}"
+    KEY_PAIR_NAME="${KEY_PAIR_NAME%.PEM}"
 fi
 
 cd "$TF_DIR" || { fail "Cannot access terraform directory: $TF_DIR"; exit 1; }
@@ -508,7 +657,11 @@ echo "========================================"
 case "$CLOUD" in
     gcp)   echo " Project:      $PROJECT_ID" ;;
     aws)   echo " Region:       $(aws configure get region 2>/dev/null || echo 'default')" ;;
-    azure) echo " Subscription: $(az account show --query name -o tsv 2>/dev/null || echo 'default')" ;;
+    azure)
+        SUB_ID_FOR_DISPLAY="${PROJECT_ID:-$(az account show --query id -o tsv 2>/dev/null)}"
+        SUB_NAME_FOR_DISPLAY=$(az account list --query "[?id=='$SUB_ID_FOR_DISPLAY'].name | [0]" -o tsv 2>/dev/null || echo "")
+        echo " Subscription: ${SUB_NAME_FOR_DISPLAY:-unknown} ($SUB_ID_FOR_DISPLAY)"
+        ;;
 esac
 echo " Policy:       $POLICY"
 echo " Machine Type: $RESOLVED_MACHINE_TYPE"
@@ -565,8 +718,6 @@ zone = "$ZONE"
 machine_type = "$RESOLVED_MACHINE_TYPE"
 use_spot_vms = $USE_SPOT
 assign_public_ip = $ASSIGN_PUBLIC_IP
-source_image_project = "zettalane-dev"
-source_image = "mayascale19-osimage-20260125"
 EOF
             # Reserve client slot in placement policy for colocation
             if [ "$ENABLE_COLOCATION" = "true" ]; then
@@ -582,14 +733,13 @@ performance_policy = "$POLICY"
 instance_type_override = "$RESOLVED_MACHINE_TYPE"
 use_spot_instances = $USE_SPOT
 assign_public_ip = $ASSIGN_PUBLIC_IP
-ami_id = "ami-0a37d6b99305b6746"
 ssh_cidr_blocks = ["0.0.0.0/0"]
 availability_zone = "$AWS_AZ"
 EOF
             # AWS placement group auto-created for zonal non-spot
             ;;
         azure)
-            AZURE_SUB_ID=$(az account show --query id -o tsv 2>/dev/null || echo "")
+            AZURE_SUB_ID="${PROJECT_ID:-$(az account show --query id -o tsv 2>/dev/null || echo "")}"
             cat > terraform.tfvars <<EOF
 subscription_id = "$AZURE_SUB_ID"
 cluster_name = "$DEPLOYMENT_NAME"
@@ -597,7 +747,6 @@ location = "$LOCATION"
 performance_policy = "$POLICY"
 use_spot_instances = $USE_SPOT
 assign_public_ip = $ASSIGN_PUBLIC_IP
-vm_image_id = "/subscriptions/a1374ce4-3087-440a-9af3-674d883c6d3f/resourceGroups/zettalane-dev/providers/Microsoft.Compute/galleries/zettalaneDev/images/mayascale19/versions/1.9.20251215"
 $([ -n "$SSH_PUBLIC_KEY" ] && echo "ssh_public_key = \"$SSH_PUBLIC_KEY\"")
 EOF
             if [ -n "$RESOURCE_GROUP" ]; then
@@ -737,10 +886,25 @@ NODE1_NAME=$(get_output node1_name)
 VIP1=$(get_output vip1_address)
 VIP2=$(get_output vip2_address)
 
-# Cloud-specific SSH command and placement group info
+# Cloud-specific SSH command and placement group info. Prefer plain
+# `ssh -i $SSH_PRIVKEY` whenever a public IP is available and we have the
+# private key (much faster than gcloud, which probes IAM/IAP/OS Login on
+# every invocation). Fall back to `gcloud compute ssh` only for the IAP /
+# pubkey-only path on GCP.
+SSH_I=""
+[ -n "$SSH_PRIVKEY" ] && SSH_I="-i $SSH_PRIVKEY "
+SSH_USES_GCLOUD=false
+
 case "$CLOUD" in
     gcp)
-        SSH_BASE="gcloud compute ssh ${SSH_USER}@${NODE1_NAME} --zone=${ZONE} --project=${PROJECT_ID} --quiet --ssh-flag=-o --ssh-flag=StrictHostKeyChecking=no --ssh-flag=-o --ssh-flag=UserKnownHostsFile=/dev/null"
+        if [ "$ASSIGN_PUBLIC_IP" = "true" ] && [ -n "$NODE1_IP" ] && [ -n "$SSH_PRIVKEY" ]; then
+            SSH_BASE="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 ${SSH_I}${SSH_USER}@${NODE1_IP}"
+        else
+            SSH_USES_GCLOUD=true
+            IAP_FLAG=""
+            [ "$ASSIGN_PUBLIC_IP" = "false" ] && IAP_FLAG="--tunnel-through-iap"
+            SSH_BASE="gcloud compute ssh ${SSH_USER}@${NODE1_NAME} --zone=${ZONE} --project=${PROJECT_ID} --quiet $IAP_FLAG --ssh-flag=-o --ssh-flag=StrictHostKeyChecking=no --ssh-flag=-o --ssh-flag=UserKnownHostsFile=/dev/null"
+        fi
         # Derive placement policy name from deployment name (matches terraform naming)
         if [ "$ENABLE_COLOCATION" = "true" ]; then
             PLACEMENT_POLICY_NAME="${DEPLOYMENT_NAME}-placement-policy"
@@ -749,28 +913,24 @@ case "$CLOUD" in
         fi
         ;;
     aws)
-        if [ -f "$HOME/.ssh/${KEY_PAIR_NAME}.pem" ]; then
-            SSH_BASE="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i $HOME/.ssh/${KEY_PAIR_NAME}.pem ${SSH_USER}@${NODE1_IP}"
-        else
-            SSH_BASE="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${NODE1_IP}"
-        fi
+        SSH_BASE="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_I}${SSH_USER}@${NODE1_IP}"
         PLACEMENT_GROUP_NAME=$(get_output placement_group_name)
         # Get storage AZ for client colocation
         STORAGE_AZ=$(get_output availability_zone)
         ;;
     azure)
-        SSH_BASE="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${NODE1_IP}"
+        SSH_BASE="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_I}${SSH_USER}@${NODE1_IP}"
         VNET_NAME=$(get_output virtual_network_name)
         SUBNET_NAME=$(get_output subnet_name)
-        AZURE_SUB_ID=$(az account show --query id -o tsv 2>/dev/null || echo "")
+        AZURE_SUB_ID="${PROJECT_ID:-$(az account show --query id -o tsv 2>/dev/null || echo "")}"
         # Get PPG ID from cluster_config output
         PPG_ID=$(terraform output -json cluster_config 2>/dev/null | jq -r '.placement_group_id // empty' 2>/dev/null || echo "")
         ;;
 esac
 
-# SSH helper function
+# SSH helper function. SSH_USES_GCLOUD selects --command vs positional arg.
 run_ssh() {
-    if [ "$CLOUD" = "gcp" ]; then
+    if [ "$SSH_USES_GCLOUD" = "true" ]; then
         $SSH_BASE --command "$1"
     else
         $SSH_BASE "$1"
@@ -902,7 +1062,7 @@ fi
 
 # Test 2: Wait for MayaScale cluster setup
 log "Test 2: Waiting for MayaScale cluster setup..."
-MAX_WAIT=300
+MAX_WAIT=600   # cluster_setup2.sh on Azure with spot + dynamic disk attach often runs ~7-8 min
 WAIT_INTERVAL=15
 ELAPSED=0
 CLUSTER_READY=false
@@ -990,50 +1150,45 @@ if [ "$SKIP_CLIENT" = "false" ]; then
             warn "Could not get ssh_user from terraform output"
             CLIENT_SSH_USER="ubuntu"  # safe fallback for most cloud images
         fi
+        # Prefer plain ssh/scp when client has a public IP and we have the
+        # private key — much faster than gcloud. Fall back to gcloud only
+        # for the GCP-IAP / pubkey-only path.
+        CLIENT_SSH_I=""
+        [ -n "$SSH_PRIVKEY" ] && CLIENT_SSH_I="-i $SSH_PRIVKEY "
+        CLIENT_SSH_USES_GCLOUD=false
         case "$CLOUD" in
             gcp)
-                CLIENT_SSH_BASE="gcloud compute ssh ${CLIENT_SSH_USER}@${CLIENT_NAME} --zone=${ZONE} --project=${PROJECT_ID} --quiet --ssh-flag=-o --ssh-flag=StrictHostKeyChecking=no --ssh-flag=-o --ssh-flag=UserKnownHostsFile=/dev/null --ssh-flag=-o --ssh-flag=LogLevel=ERROR"
-                ;;
-            aws)
-                if [ -f "$HOME/.ssh/${KEY_PAIR_NAME}.pem" ]; then
-                    CLIENT_SSH_BASE="ssh -i $HOME/.ssh/${KEY_PAIR_NAME}.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 ${CLIENT_SSH_USER}@${CLIENT_IP}"
+                if [ -n "$CLIENT_IP" ] && [ -n "$SSH_PRIVKEY" ]; then
+                    CLIENT_SSH_BASE="ssh ${CLIENT_SSH_I}-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 ${CLIENT_SSH_USER}@${CLIENT_IP}"
                 else
-                    CLIENT_SSH_BASE="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 ${CLIENT_SSH_USER}@${CLIENT_IP}"
+                    CLIENT_SSH_USES_GCLOUD=true
+                    CLIENT_SSH_BASE="gcloud compute ssh ${CLIENT_SSH_USER}@${CLIENT_NAME} --zone=${ZONE} --project=${PROJECT_ID} --quiet --ssh-flag=-o --ssh-flag=StrictHostKeyChecking=no --ssh-flag=-o --ssh-flag=UserKnownHostsFile=/dev/null --ssh-flag=-o --ssh-flag=LogLevel=ERROR"
                 fi
                 ;;
-            azure)
-                CLIENT_SSH_BASE="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 ${CLIENT_SSH_USER}@${CLIENT_IP}"
+            aws|azure)
+                CLIENT_SSH_BASE="ssh ${CLIENT_SSH_I}-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 ${CLIENT_SSH_USER}@${CLIENT_IP}"
                 ;;
         esac
 
-        # Client SSH helper function
+        # Client SSH helper. CLIENT_SSH_USES_GCLOUD selects --command vs positional arg.
         run_client_ssh() {
-            if [ "$CLOUD" = "gcp" ]; then
+            if [ "$CLIENT_SSH_USES_GCLOUD" = "true" ]; then
                 $CLIENT_SSH_BASE --command "$1"
             else
                 $CLIENT_SSH_BASE "$1"
             fi
         }
 
-        # Client SCP helper function (files go to user's home directory)
+        # Client SCP helper function (files go to user's home directory).
+        # Same prefer-direct-when-possible logic.
         copy_to_client() {
             local src="$1"
             local dst="$2"
-            case "$CLOUD" in
-                gcp)
-                    gcloud compute scp "$src" "${CLIENT_SSH_USER}@${CLIENT_NAME}:~/${dst}" --zone="${ZONE}" --project="${PROJECT_ID}" --quiet
-                    ;;
-                aws)
-                    if [ -f "$HOME/.ssh/${KEY_PAIR_NAME}.pem" ]; then
-                        scp -i "$HOME/.ssh/${KEY_PAIR_NAME}.pem" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "$src" "${CLIENT_SSH_USER}@${CLIENT_IP}:~/${dst}"
-                    else
-                        scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "$src" "${CLIENT_SSH_USER}@${CLIENT_IP}:~/${dst}"
-                    fi
-                    ;;
-                azure)
-                    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$src" "${CLIENT_SSH_USER}@${CLIENT_IP}:~/${dst}"
-                    ;;
-            esac
+            if [ "$CLIENT_SSH_USES_GCLOUD" = "true" ]; then
+                gcloud compute scp "$src" "${CLIENT_SSH_USER}@${CLIENT_NAME}:~/${dst}" --zone="${ZONE}" --project="${PROJECT_ID}" --quiet
+            else
+                scp ${CLIENT_SSH_I}-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "$src" "${CLIENT_SSH_USER}@${CLIENT_IP}:~/${dst}"
+            fi
         }
 
         # Test 3: Connect NVMe volumes on client

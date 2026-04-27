@@ -287,6 +287,11 @@ locals {
     project_id                 = local.resource_group_name  # Azure equivalent: resource group name
     subnet_cidr = azurerm_subnet.mayanas[0].address_prefixes[0]
     shares                     = jsonencode(var.shares)
+    enable_lustre              = var.enable_lustre
+    lustre_fsname              = var.fsname
+    lustre_dom_threshold       = var.dom_threshold
+    lustre_mdt_disk_name       = var.enable_lustre ? azurerm_managed_disk.lustre_mdt[0].name : ""
+    mayanas_startup_wait       = var.mayanas_startup_wait != null ? tostring(var.mayanas_startup_wait) : ""
   })
 }
 
@@ -463,6 +468,38 @@ resource "azurerm_managed_disk" "metadata" {
     Node    = "node${count.index % local.node_count + 1}"
     Index   = tostring(floor(count.index / local.node_count) + 1)
   })
+}
+
+# Lustre MDT disk (Premium SSD for low-latency metadata operations).
+# MDT must be on SSD — Blob round-trips kill metadata performance.
+resource "azurerm_managed_disk" "lustre_mdt" {
+  count                = var.enable_lustre ? 1 : 0
+  name                 = "disk-lustre-mdt-${local.cluster_name}-${random_id.deployment.hex}"
+  location             = local.resource_group.location
+  resource_group_name  = local.resource_group_name
+  storage_account_type = "Premium_LRS"
+  create_option        = "Empty"
+  disk_size_gb         = 50
+  zone                 = local.node1_zone
+
+  tags = merge(local.common_tags, {
+    Purpose = "lustre-mdt"
+  })
+}
+
+# Attach Lustre MDT disk to node1.
+# In active-active mode, cluster_setup2.sh attaches all data disks (metadata
+# + MDT) dynamically at startup so Linux assigns /dev/nvme0nX device-numbers
+# in a controlled order. Terraform pre-attachment would inject the MDT at an
+# unpredictable boot-time position and break the LUN-to-device mapping that
+# cluster_setup2.sh's metadata-disk validator depends on. Mirror the
+# metadata-disk attachment pattern (line ~663): count=0 for active-active.
+resource "azurerm_virtual_machine_data_disk_attachment" "lustre_mdt" {
+  count              = var.enable_lustre && var.deployment_type != "active-active" ? 1 : 0
+  managed_disk_id    = azurerm_managed_disk.lustre_mdt[0].id
+  virtual_machine_id = azurerm_linux_virtual_machine.mayanas[0].id
+  lun                = 10
+  caching            = "ReadOnly"
 }
 
 # Storage Account for object storage

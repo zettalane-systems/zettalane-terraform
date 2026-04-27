@@ -6,6 +6,10 @@ users:
     ssh_authorized_keys:
       - ${ssh_public_key}
 
+# Default client image is Ubuntu 24.04 (Canonical) — apt installs nfs-common.
+# When deploy-lustre.sh overrides to Rocky, the install-lustre-client.sh /
+# validate scripts install nfs-utils via dnf at run time (cloud-init won't
+# translate the name).
 packages:
   - nfs-common
   - fio

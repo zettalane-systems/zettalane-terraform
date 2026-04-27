@@ -406,9 +406,50 @@ variable "shares" {
 }
 
 
+# Lustre Protocol Configuration
+variable "enable_lustre" {
+  description = "Enable Lustre protocol support. Adds MDT disk and configures Lustre on cluster_setup2.sh startup."
+  type        = bool
+  default     = false
+}
+
+variable "fsname" {
+  description = "Lustre filesystem name (max 8 chars, lowercase alphanumeric, must start with letter)"
+  type        = string
+  default     = "lustre"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9]{0,7}$", var.fsname))
+    error_message = "Lustre filesystem name must be 1-8 lowercase alphanumeric characters, starting with a letter."
+  }
+}
+
+variable "dom_threshold" {
+  description = "Lustre Data-on-MDT threshold. Files smaller than this are stored on MDT (SSD) instead of OST (Blob). Set to 0 to disable."
+  type        = string
+  default     = "64K"
+
+  validation {
+    condition     = contains(["0", "4K", "8K", "16K", "32K", "64K", "128K", "256K", "512K", "1M"], var.dom_threshold)
+    error_message = "DoM threshold must be one of: 0, 4K, 8K, 16K, 32K, 64K, 128K, 256K, 512K, 1M."
+  }
+}
+
 # Azure Provider Configuration (required in v4.x)
 variable "subscription_id" {
   description = "Azure subscription ID (required for provider v4.x)"
   type        = string
   default     = ""
+}
+
+variable "mayanas_startup_wait" {
+  description = "Time in seconds to wait for MayaNAS startup process to complete (null = use default 90s, 0 = no wait)"
+  type        = number
+  nullable    = true
+  default     = null
+
+  validation {
+    condition     = var.mayanas_startup_wait == null ? true : var.mayanas_startup_wait >= 0
+    error_message = "MayaNAS startup wait must be null or 0 or greater."
+  }
 }

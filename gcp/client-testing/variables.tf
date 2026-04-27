@@ -51,7 +51,7 @@ variable "placement_policy_name" {
 }
 
 variable "source_image" {
-  description = "Client boot image (gcloud image spec). Rocky 10 is the default because Whamcloud's Lustre 2.17 DKMS package builds cleanly against its kernel. Ubuntu 22.04 also works (--client-image ubuntu-os-cloud/ubuntu-2204-lts); Ubuntu 24.04 HWE kernel is currently incompatible with Lustre 2.17 source."
+  description = "Client boot image (gcloud image spec). Default is Ubuntu 24.04 because the validate-mayanas / NFS performance test scripts assume a Debian-family client (apt-based). For Lustre clients, deploy-lustre.sh overrides this to rocky-linux-cloud/rocky-linux-10 (Whamcloud's Lustre 2.17 DKMS package builds cleanly against its kernel; Ubuntu 24.04 HWE kernel is incompatible with Lustre 2.17 source)."
   type        = string
-  default     = "rocky-linux-cloud/rocky-linux-10"
+  default     = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
 }
