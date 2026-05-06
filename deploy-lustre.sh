@@ -41,6 +41,8 @@ BUCKET_COUNT=12
 DEPLOYMENT_TYPE="active-active"
 FSNAME="zettafs"
 MDT_BACKEND="ldiskfs"              # GCP-only var name; Azure module hardcodes ldiskfs
+JOIN_MGS_NID=""                    # if set, this cluster joins an existing fs (OST-only)
+PAIR_INDEX=""                      # explicit override; auto-set to 1 in join mode
 SOURCE_IMAGE=""                    # default set per-cloud after parse
 DEPLOY_CLIENT="false"
 CLIENT_MACHINE_TYPE=""             # default set per-cloud after parse
@@ -95,6 +97,16 @@ Optional:
                               (default: $FSNAME)
       --mdt-backend <BE>      ldiskfs | zfs (GCP only — Azure hardcoded ldiskfs)
                               (default: $MDT_BACKEND)
+      --join-mgs <NID>        Join existing Lustre filesystem at this MGS NID
+                              (e.g. 10.100.198.208@tcp). Joining cluster contributes
+                              OSTs only; no MDT disk is provisioned. Get the NID
+                              from "terraform output lustre_mgs_nid" of the
+                              originating cluster.
+      --pair-index <N>        Index of this HA pair within the VPC subnet (default:
+                              0 standalone, auto-set to 1 when --join-mgs is given).
+                              Set explicitly when stacking 3+ pairs in one subnet
+                              to guarantee non-colliding VIPs (each pair claims
+                              4 contiguous IPs).
       --source-image <IMG>    MayaNAS Lustre image
                               (GCP: image family in zettalane-public,
                                     default: mayanas-openzfs-lustre;
@@ -158,6 +170,8 @@ while [[ $# -gt 0 ]]; do
         -t|--deployment-type)  DEPLOYMENT_TYPE="$2"; shift 2 ;;
         --fsname)              FSNAME="$2"; shift 2 ;;
         --mdt-backend)         MDT_BACKEND="$2"; shift 2 ;;
+        --join-mgs)            JOIN_MGS_NID="$2"; shift 2 ;;
+        --pair-index)          PAIR_INDEX="$2"; shift 2 ;;
         --source-image)        SOURCE_IMAGE="$2"; shift 2 ;;
         --deploy-client)
             DEPLOY_CLIENT="true"
@@ -179,6 +193,14 @@ while [[ $# -gt 0 ]]; do
         *)                     fail "Unknown option: $1 (run with --help)" ;;
     esac
 done
+
+# ---- Default pair_index in join mode ------------------------------------
+# Joining clusters need a non-colliding VIP slot. Default to 1 unless the
+# operator passed --pair-index explicitly.
+if [ -n "$JOIN_MGS_NID" ] && [ -z "$PAIR_INDEX" ]; then
+    PAIR_INDEX=1
+fi
+PAIR_INDEX="${PAIR_INDEX:-0}"
 
 # ---- Cloud-specific setup ----------------------------------------------
 case "$CLOUD" in
@@ -303,6 +325,8 @@ echo "  Cluster:      $CLUSTER_NAME"
 echo "  Machine:      $MACHINE_TYPE  ·  buckets: $BUCKET_COUNT"
 echo "  Deployment:   $DEPLOYMENT_TYPE  ·  fsname: $FSNAME"
 [ "$CLOUD" = "gcp" ] && echo "  MDT backend:  $MDT_BACKEND"
+[ -n "$JOIN_MGS_NID" ] && echo "  Join MGS:     $JOIN_MGS_NID  (OSTs only, no new MDT)"
+[ "$PAIR_INDEX" != "0" ] && echo "  Pair index:   $PAIR_INDEX  (deterministic VIPs at .$((PAIR_INDEX*2+1))/.$((PAIR_INDEX*2+2)))"
 echo "  Image:        $SOURCE_IMAGE"
 echo "  Spot:         $USE_SPOT  ·  Public IP: $ASSIGN_PUBLIC_IP"
 [ "$DEPLOY_CLIENT" = "true" ] && echo "  Client:       $CLIENT_MACHINE_TYPE"
@@ -441,6 +465,8 @@ source_image_family  = "$SOURCE_IMAGE"
 enable_lustre       = true
 fsname              = "$FSNAME"
 lustre_mdt_backend  = "$MDT_BACKEND"
+pair_index          = $PAIR_INDEX
+$([ -n "$JOIN_MGS_NID" ] && echo "lustre_join_mgs_nid = \"$JOIN_MGS_NID\"")
 
 # Cost / access toggles
 use_spot_vms        = $USE_SPOT
@@ -473,6 +499,7 @@ vm_image_id         = "$SOURCE_IMAGE"
 # Lustre protocol support (Azure module hardcodes ldiskfs MDT)
 enable_lustre       = true
 fsname              = "$FSNAME"
+$([ -n "$JOIN_MGS_NID" ] && echo "lustre_join_mgs_nid = \"$JOIN_MGS_NID\"")
 EOF
         ;;
 esac

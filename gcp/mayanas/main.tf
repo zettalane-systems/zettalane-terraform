@@ -115,16 +115,18 @@ locals {
   range_base_ip = local.vip_cidr_range != "" ? local.range_parts[0] : ""
   base_ip_parts = local.range_base_ip != "" ? split(".", local.range_base_ip) : ["", "", "", ""]
   
-  # Calculate dual VIP addresses within the /24 range using all random bytes
-  # Use the full decimal value for better distribution and avoid collisions
+  # Calculate dual VIP addresses within the /24 range.
+  #
+  # Two strategies:
+  #   pair_index >  0  →  deterministic slot assignment. Each pair owns 2
+  #                       contiguous IPs; pair N uses (2*N+1, 2*N+2). Guarantees
+  #                       zero overlap when stacking multiple HA pairs in the
+  #                       same /24 (Lustre join, multi-pair deployments).
+  #   pair_index == 0  →  random offset based on random_id.suffix.dec. Backward
+  #                       compatible for single-pair deployments.
   full_random_value = random_id.suffix.dec
-  
-  # Calculate VIP offsets within the available range (1-254 for /24)
-  # Use different parts of the random value for each VIP to ensure they're different
-  vip_offset1 = (local.full_random_value % 254) + 1
-  vip_offset2 = (floor(local.full_random_value / 256) % 254) + 1
-  
-  # Ensure VIP addresses are different by adding 1 to second if they're the same
+  vip_offset1 = var.pair_index > 0 ? (var.pair_index * 2 + 1) : ((local.full_random_value % 254) + 1)
+  vip_offset2 = var.pair_index > 0 ? (var.pair_index * 2 + 2) : ((floor(local.full_random_value / 256) % 254) + 1)
   vip_offset2_final = local.vip_offset1 == local.vip_offset2 ? ((local.vip_offset2 % 254) + 1) : local.vip_offset2
   
   # VIP addresses based on deployment type
@@ -415,8 +417,9 @@ resource "google_compute_region_disk" "mayanas_metadata_regional" {
 
 # Lustre MDT disk (pd-ssd for low-latency metadata operations)
 # MDT must be on NVMe/SSD — GCS round-trips kill metadata performance
+# Skipped in join mode: the remote MGS already hosts the MDT for this fs.
 resource "google_compute_disk" "lustre_mdt" {
-  count = var.enable_lustre ? 1 : 0
+  count = var.enable_lustre && var.lustre_join_mgs_nid == "" ? 1 : 0
 
   name = "${var.cluster_name}-lustre-mdt-${local.resource_suffix}"
   type = local.metadata_disk_type
@@ -539,8 +542,9 @@ data "template_file" "startup_script_node1" {
     enable_lustre        = var.enable_lustre
     lustre_fsname        = var.fsname
     lustre_dom_threshold = var.dom_threshold
-    lustre_mdt_disk_names = var.enable_lustre ? join(" ", [for disk in google_compute_disk.lustre_mdt : disk.name]) : ""
+    lustre_mdt_disk_names = var.enable_lustre && var.lustre_join_mgs_nid == "" ? join(" ", [for disk in google_compute_disk.lustre_mdt : disk.name]) : ""
     lustre_mdt_backend    = var.lustre_mdt_backend
+    lustre_join_mgs_nid   = var.lustre_join_mgs_nid
   }
 }
 
@@ -576,9 +580,9 @@ resource "google_compute_instance" "mayanas_node1" {
     }
   }
 
-  # Attach Lustre MDT disk to node1 (when enable_lustre = true)
+  # Attach Lustre MDT disk to node1 (skipped in join mode — see disk count guard above)
   dynamic "attached_disk" {
-    for_each = var.enable_lustre ? [1] : []
+    for_each = var.enable_lustre && var.lustre_join_mgs_nid == "" ? [1] : []
     content {
       source      = google_compute_disk.lustre_mdt[0].id
       device_name = google_compute_disk.lustre_mdt[0].name

@@ -292,6 +292,6 @@ output "lustre_fsname" {
 }
 
 output "lustre_mgs_nid" {
-  description = "Lustre MGS NID (VIP for HA, internal IP for single node)"
-  value       = var.enable_lustre ? "${var.deployment_type == "single" ? google_compute_instance.mayanas_node1.network_interface[0].network_ip : local.vip_node1_address}@tcp" : null
+  description = "Lustre MGS NID for this filesystem. For an originating cluster this is its own VIP@tcp (or node1 IP for single deployment); for a joining cluster this is the remote MGS NID it joined. Pass this value as lustre_join_mgs_nid when deploying additional clusters that should join the same filesystem."
+  value       = var.enable_lustre ? (var.lustre_join_mgs_nid != "" ? var.lustre_join_mgs_nid : "${var.deployment_type == "single" ? google_compute_instance.mayanas_node1.network_interface[0].network_ip : local.vip_node1_address}@tcp") : null
 }

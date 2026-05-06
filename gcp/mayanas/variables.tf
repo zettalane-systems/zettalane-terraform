@@ -305,9 +305,31 @@ variable "boot_disk_type" {
 
 # Lustre Protocol Configuration
 variable "enable_lustre" {
-  description = "Enable Lustre protocol support. Adds MDT disk and configures Lustre on cluster_setup2.sh startup."
+  description = "Enable Lustre protocol support. Adds MDT disk and configures Lustre at startup."
   type        = bool
   default     = false
+}
+
+variable "pair_index" {
+  description = "Index of this HA pair within its VPC subnet, used to deterministically partition VIPs. 0 = first/standalone (random VIP allocation). 1, 2, … = additional pairs sharing the same subnet (each pair claims 2 contiguous IPs in the alias range, no random collisions). Set to 1 on the first joining cluster, 2 on the second, etc. Range: 0-126."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.pair_index >= 0 && var.pair_index <= 126
+    error_message = "pair_index must be between 0 and 126 (constrained by /24 alias range, 2 IPs per pair)."
+  }
+}
+
+variable "lustre_join_mgs_nid" {
+  description = "If set together with enable_lustre=true, this cluster joins an existing Lustre filesystem at this MGS NID (e.g. '10.100.198.208@tcp') instead of creating a new one. Joining clusters contribute OSTs only and skip MDT provisioning. Ignored when enable_lustre=false."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.lustre_join_mgs_nid == "" || can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+@[a-z0-9]+(:[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+@[a-z0-9]+)*$", var.lustre_join_mgs_nid))
+    error_message = "lustre_join_mgs_nid must be a Lustre NID like '10.100.198.208@tcp' (or comma-or-colon-separated list for HA)."
+  }
 }
 
 variable "fsname" {

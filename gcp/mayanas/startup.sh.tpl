@@ -352,6 +352,7 @@ export MAYANAS_LUSTRE_FSNAME="${lustre_fsname}"
 export MAYANAS_LUSTRE_DOM_THRESHOLD="${lustre_dom_threshold}"
 export MAYANAS_LUSTRE_MDT_DISK="${lustre_mdt_disk_names}"
 export MAYANAS_LUSTRE_MDT_BACKEND="${lustre_mdt_backend}"
+export MAYANAS_LUSTRE_JOIN_MGS_NID="${lustre_join_mgs_nid}"
 %{ endif ~}
 
 # Set environment variables expected by MayaNAS setup scripts
@@ -417,6 +418,7 @@ export MAYANAS_LUSTRE_FSNAME="${lustre_fsname}"
 export MAYANAS_LUSTRE_DOM_THRESHOLD="${lustre_dom_threshold}"
 export MAYANAS_LUSTRE_MDT_DISK="${lustre_mdt_disk_names}"
 export MAYANAS_LUSTRE_MDT_BACKEND="${lustre_mdt_backend}"
+export MAYANAS_LUSTRE_JOIN_MGS_NID="${lustre_join_mgs_nid}"
 %{ endif ~}
 
 # MayaNAS-expected environment variables
