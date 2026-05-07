@@ -34,8 +34,14 @@ resource "google_compute_instance" "client" {
   boot_disk {
     initialize_params {
       image = var.source_image
-      size  = 30
-      type  = "pd-balanced"
+      size  = 50
+      # C4, C4D, C3, C3D require hyperdisk-balanced (don't support pd-balanced)
+      type  = (
+        startswith(var.machine_type, "c4-") ||
+        startswith(var.machine_type, "c4d-") ||
+        startswith(var.machine_type, "c3-") ||
+        startswith(var.machine_type, "c3d-")
+      ) ? "hyperdisk-balanced" : "pd-balanced"
     }
   }
 
