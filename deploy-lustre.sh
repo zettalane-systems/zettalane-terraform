@@ -381,11 +381,13 @@ fi
 if [ "$DESTROY_MODE" = "true" ]; then
     log "Destroying Lustre deployment... (verbose terraform output → $LOGFILE)"
 
-    if [ -f "$CLIENT_DIR/terraform.tfstate" ]; then
+    if [ "$DEPLOY_CLIENT" = "true" ] && [ -f "$CLIENT_DIR/terraform.tfstate" ]; then
         log "Tearing down client..."
         (cd "$CLIENT_DIR" && terraform destroy -auto-approve -input=false) >> "$LOGFILE" 2>&1 \
             && ok "Client destroyed" \
             || warn "Client destroy had errors — see $LOGFILE"
+    elif [ -f "$CLIENT_DIR/terraform.tfstate" ]; then
+        log "Client tfstate present at $CLIENT_DIR — preserving (pass --deploy-client with --destroy to also tear down)"
     fi
 
     log "Tearing down storage cluster..."
