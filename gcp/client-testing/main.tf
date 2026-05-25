@@ -20,6 +20,15 @@ data "google_compute_resource_policy" "placement_policy" {
   project = var.project_id
 }
 
+# Calculate vCPU count for TIER_1 networking eligibility
+locals {
+  # Extract vCPU count from machine type. Works for n2-highcpu-32,
+  # c4-highcpu-144, c4-standard-48-lssd, etc.
+  # TIER_1 requires 30+ vCPUs (N2, C3, C3D, C4, N4, etc.).
+  client_vcpus            = tonumber(regex("-(\\d+)(?:-.*)?$", var.machine_type)[0])
+  enable_tier1_networking = local.client_vcpus >= 30
+}
+
 resource "google_compute_instance" "client" {
   name         = var.client_name
   machine_type = var.machine_type
@@ -46,9 +55,18 @@ resource "google_compute_instance" "client" {
   }
 
   network_interface {
-    network = data.google_compute_network.default.id
+    network  = data.google_compute_network.default.id
+    nic_type = "GVNIC"  # Required for TIER_1 networking
     access_config {
       network_tier = "PREMIUM"
+    }
+  }
+
+  # Enable TIER_1 egress bandwidth (requires 30+ vCPU machine).
+  dynamic "network_performance_config" {
+    for_each = local.enable_tier1_networking ? [1] : []
+    content {
+      total_egress_bandwidth_tier = "TIER_1"
     }
   }
 
