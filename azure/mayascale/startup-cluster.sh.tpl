@@ -142,6 +142,7 @@ export MAYASCALE_RESOURCE_ID="${resource_id} ${peer_resource_id}"
 export MAYASCALE_VIP_ADDRESS="${vip_address} ${vip_address_2}"
 
 # Additional configuration variables
+export MAYASCALE_HA_DATA="${ha_data}"
 export MAYASCALE_NODE_ROLE="${node_role}"
 export MAYASCALE_DEPLOYMENT_TYPE="${deployment_type}"
 export MAYASCALE_ZONE="$ZONE"

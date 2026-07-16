@@ -9,7 +9,7 @@
 # ============================================================================
 
 provider "azurerm" {
-  subscription_id = var.subscription_id
+  subscription_id                 = var.subscription_id
   resource_provider_registrations = "core"
 
   features {
@@ -53,143 +53,143 @@ locals {
   # Zonal: Same-zone, lowest latency, higher write performance
   performance_policies = {
     "regional-basic-performance" = {
-      target_write_iops = 46000    # 0.83× zonal (cross-zone RAID1 sync overhead)
-      target_read_iops  = 137500   # Same as zonal (client reads from local node)
+      target_write_iops       = 46000  # 0.83× zonal (cross-zone RAID1 sync overhead)
+      target_read_iops        = 137500 # Same as zonal (client reads from local node)
       target_write_latency_us = 2000
-      target_bandwidth_mbps = 12500
-      availability_strategy = "cross-zone"
-      vm_size = "Standard_L2as_v4"
-      nvme_capacity_tb = 0.48
-      nvme_devices = 1
-      network_gbps = 12.5
-      vcpus = 2
-      cost_per_month = 25
+      target_bandwidth_mbps   = 12500
+      availability_strategy   = "cross-zone"
+      vm_size                 = "Standard_L2as_v4"
+      nvme_capacity_tb        = 0.48
+      nvme_devices            = 1
+      network_gbps            = 12.5
+      vcpus                   = 2
+      cost_per_month          = 25
     }
 
     "zonal-basic-performance" = {
-      target_write_iops = 55000
-      target_read_iops  = 137500
+      target_write_iops       = 55000
+      target_read_iops        = 137500
       target_write_latency_us = 1000
-      target_bandwidth_mbps = 12500
-      availability_strategy = "same-zone"
-      vm_size = "Standard_L2as_v4"
-      nvme_capacity_tb = 0.48
-      nvme_devices = 1
-      network_gbps = 12.5
-      vcpus = 2
-      cost_per_month = 25
+      target_bandwidth_mbps   = 12500
+      availability_strategy   = "same-zone"
+      vm_size                 = "Standard_L2as_v4"
+      nvme_capacity_tb        = 0.48
+      nvme_devices            = 1
+      network_gbps            = 12.5
+      vcpus                   = 2
+      cost_per_month          = 25
     }
 
     "regional-standard-performance" = {
-      target_write_iops = 120000   # 0.83× zonal
-      target_read_iops  = 360000
+      target_write_iops       = 120000 # 0.83× zonal
+      target_read_iops        = 360000
       target_write_latency_us = 2000
-      target_bandwidth_mbps = 10000
-      availability_strategy = "cross-zone"
-      vm_size = "Standard_L4aos_v4"
-      nvme_capacity_tb = 2.88
-      nvme_devices = 3
-      network_gbps = 10
-      vcpus = 4
-      cost_per_month = 45
+      target_bandwidth_mbps   = 10000
+      availability_strategy   = "cross-zone"
+      vm_size                 = "Standard_L4aos_v4"
+      nvme_capacity_tb        = 2.88
+      nvme_devices            = 3
+      network_gbps            = 10
+      vcpus                   = 4
+      cost_per_month          = 45
     }
 
     "zonal-standard-performance" = {
-      target_write_iops = 144000
-      target_read_iops  = 360000
+      target_write_iops       = 144000
+      target_read_iops        = 360000
       target_write_latency_us = 1000
-      target_bandwidth_mbps = 10000
-      availability_strategy = "same-zone"
-      vm_size = "Standard_L4aos_v4"
-      nvme_capacity_tb = 2.88
-      nvme_devices = 3
-      network_gbps = 10
-      vcpus = 4
-      cost_per_month = 45
+      target_bandwidth_mbps   = 10000
+      availability_strategy   = "same-zone"
+      vm_size                 = "Standard_L4aos_v4"
+      nvme_capacity_tb        = 2.88
+      nvme_devices            = 3
+      network_gbps            = 10
+      vcpus                   = 4
+      cost_per_month          = 45
     }
 
     "regional-medium-performance" = {
-      target_write_iops = 360000   # 0.83× zonal (432K × 0.83)
-      target_read_iops  = 1080000  # Azure spec
+      target_write_iops       = 360000  # 0.83× zonal (432K × 0.83)
+      target_read_iops        = 1080000 # Azure spec
       target_write_latency_us = 2000
-      target_bandwidth_mbps = 18750
-      availability_strategy = "cross-zone"
-      vm_size = "Standard_L12aos_v4"
-      nvme_capacity_tb = 8.64     # 9 × 960GB
-      nvme_devices = 9
-      network_gbps = 18.75
-      vcpus = 12
-      cost_per_month = 150
+      target_bandwidth_mbps   = 18750
+      availability_strategy   = "cross-zone"
+      vm_size                 = "Standard_L12aos_v4"
+      nvme_capacity_tb        = 8.64 # 9 × 960GB
+      nvme_devices            = 9
+      network_gbps            = 18.75
+      vcpus                   = 12
+      cost_per_month          = 150
     }
 
     "zonal-medium-performance" = {
-      target_write_iops = 432000   # Azure spec: 432K write IOPS
-      target_read_iops  = 1080000  # Azure spec: 1.08M read IOPS
+      target_write_iops       = 432000  # Azure spec: 432K write IOPS
+      target_read_iops        = 1080000 # Azure spec: 1.08M read IOPS
       target_write_latency_us = 1000
-      target_bandwidth_mbps = 18750
-      availability_strategy = "same-zone"
-      vm_size = "Standard_L12aos_v4"
-      nvme_capacity_tb = 8.64     # 9 × 960GB
-      nvme_devices = 9
-      network_gbps = 18.75
-      vcpus = 12
-      cost_per_month = 150
+      target_bandwidth_mbps   = 18750
+      availability_strategy   = "same-zone"
+      vm_size                 = "Standard_L12aos_v4"
+      nvme_capacity_tb        = 8.64 # 9 × 960GB
+      nvme_devices            = 9
+      network_gbps            = 18.75
+      vcpus                   = 12
+      cost_per_month          = 150
     }
 
     "regional-high-performance" = {
-      target_write_iops = 720000   # 0.83× zonal
-      target_read_iops  = 2160000
+      target_write_iops       = 720000 # 0.83× zonal
+      target_read_iops        = 2160000
       target_write_latency_us = 2000
-      target_bandwidth_mbps = 37500
-      availability_strategy = "cross-zone"
-      vm_size = "Standard_L24aos_v4"
-      nvme_capacity_tb = 17.28
-      nvme_devices = 9
-      network_gbps = 37.5
-      vcpus = 24
-      cost_per_month = 300
+      target_bandwidth_mbps   = 37500
+      availability_strategy   = "cross-zone"
+      vm_size                 = "Standard_L24aos_v4"
+      nvme_capacity_tb        = 17.28
+      nvme_devices            = 9
+      network_gbps            = 37.5
+      vcpus                   = 24
+      cost_per_month          = 300
     }
 
     "zonal-high-performance" = {
-      target_write_iops = 864000
-      target_read_iops  = 2160000
+      target_write_iops       = 864000
+      target_read_iops        = 2160000
       target_write_latency_us = 1000
-      target_bandwidth_mbps = 37500
-      availability_strategy = "same-zone"
-      vm_size = "Standard_L24aos_v4"
-      nvme_capacity_tb = 17.28
-      nvme_devices = 9
-      network_gbps = 37.5
-      vcpus = 24
-      cost_per_month = 300
+      target_bandwidth_mbps   = 37500
+      availability_strategy   = "same-zone"
+      vm_size                 = "Standard_L24aos_v4"
+      nvme_capacity_tb        = 17.28
+      nvme_devices            = 9
+      network_gbps            = 37.5
+      vcpus                   = 24
+      cost_per_month          = 300
     }
 
     "regional-ultra-performance" = {
-      target_write_iops = 960000   # 0.83× zonal
-      target_read_iops  = 2880000
+      target_write_iops       = 960000 # 0.83× zonal
+      target_read_iops        = 2880000
       target_write_latency_us = 2000
-      target_bandwidth_mbps = 50000
-      availability_strategy = "cross-zone"
-      vm_size = "Standard_L32aos_v4"
-      nvme_capacity_tb = 23.04
-      nvme_devices = 12
-      network_gbps = 50
-      vcpus = 32
-      cost_per_month = 400
+      target_bandwidth_mbps   = 50000
+      availability_strategy   = "cross-zone"
+      vm_size                 = "Standard_L32aos_v4"
+      nvme_capacity_tb        = 23.04
+      nvme_devices            = 12
+      network_gbps            = 50
+      vcpus                   = 32
+      cost_per_month          = 400
     }
 
     "zonal-ultra-performance" = {
-      target_write_iops = 1152000
-      target_read_iops  = 2880000
+      target_write_iops       = 1152000
+      target_read_iops        = 2880000
       target_write_latency_us = 1000
-      target_bandwidth_mbps = 50000
-      availability_strategy = "same-zone"
-      vm_size = "Standard_L32aos_v4"
-      nvme_capacity_tb = 23.04
-      nvme_devices = 12
-      network_gbps = 50
-      vcpus = 32
-      cost_per_month = 400
+      target_bandwidth_mbps   = 50000
+      availability_strategy   = "same-zone"
+      vm_size                 = "Standard_L32aos_v4"
+      nvme_capacity_tb        = 23.04
+      nvme_devices            = 12
+      network_gbps            = 50
+      vcpus                   = 32
+      cost_per_month          = 400
     }
   }
 
@@ -237,7 +237,11 @@ locals {
     var.ssh_public_key != "" ? var.ssh_public_key :
     var.ssh_key_vault_id != "" ? data.azurerm_key_vault_secret.ssh_key[0].value :
     var.ssh_key_resource_id != "" ? data.azurerm_ssh_public_key.ssh_key[0].public_key :
-    ""
+    # destroy-safe placeholder: a real apply always selects one of the three key
+    # methods above (null_resource.ssh_key_validation errors on zero), so this is
+    # never applied -- it only keeps public_key non-empty so a destroy plan, which
+    # still schema-validates the attribute, doesn't fail when tfvars is gone.
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKAVOCOYD8u/ulsYz6XkwTNL1Yij71r8SrpVExiGVJIk mayascale-destroy-placeholder-never-applied"
   )
 }
 
@@ -253,29 +257,23 @@ resource "null_resource" "ssh_key_validation" {
 # RESOURCE GROUP
 # ============================================================================
 
-# Check if resource group exists
-data "external" "resource_group_exists" {
-  count = var.resource_group_name != "" ? 1 : 0
-  program = ["bash", "-c", <<-EOF
-    if az group show --name "${var.resource_group_name}" >/dev/null 2>&1; then
-      echo '{"exists":"true"}'
-    else
-      echo '{"exists":"false"}'
-    fi
-  EOF
-  ]
-}
-
+# Check if resource group exists.
+# Query the SAME subscription the azurerm provider targets (var.subscription_id), NOT
+# az CLI's default subscription -- otherwise an RG that exists in the target sub is
+# reported missing, terraform sets create_new_rg=true and the apply fails with
+# "a resource with the ID .../resourceGroups/<rg> already exists".
 locals {
-  # If resource_group_name is specified, use it (whether it exists or needs to be created)
-  # If not specified, generate a random name
+  # If resource_group_name is specified, use it; else generate a unique per-cluster name.
   resource_group_name = var.resource_group_name != "" ? var.resource_group_name : "rg-${var.cluster_name}-${random_id.suffix.hex}"
 
-  # Check if we should use existing RG (only if specified name exists)
-  use_existing_rg = var.resource_group_name != "" && length(data.external.resource_group_exists) > 0 && data.external.resource_group_exists[0].result.exists == "true"
-
-  # Create new RG if: (1) no name specified OR (2) specified name doesn't exist
-  create_new_rg   = !local.use_existing_rg
+  # A NAMED RG is treated as SHARED/pre-existing: referenced via `data`, NEVER owned or
+  # deleted -- a per-cluster destroy must not delete a shared RG (it would wipe the other
+  # clusters in it). The deploy wrapper runs `az group create` (idempotent) first, so it
+  # always exists. NO name -> own a unique per-cluster RG (safe to delete on destroy).
+  # (Dropped the old `az group exists` external-data check: it FAILED OPEN -- a transient
+  #  az error returned exists=false, so terraform adopted + later deleted the shared RG.)
+  use_existing_rg = var.resource_group_name != ""
+  create_new_rg   = var.resource_group_name == ""
 }
 
 # Use existing resource group
@@ -305,17 +303,60 @@ locals {
 # NETWORKING - VNet and Subnet
 # ============================================================================
 
-# Use existing VNet if specified
+# ----------------------------------------------------------------------------
+# Shared "fabric" network: every pair joins ONE common VNet (default "mayascale-vnet")
+# and ONE common frontend subnet ("mayascale-subnet"), created by the first pair and
+# reused by the rest (use-if-exists, like the resource group / route table). cluster_slot
+# then partitions the VIPs + the per-pair backend subnet so pairs never collide. Set
+# vnet_name / subnet_name to join a specific pre-existing (e.g. customer) network instead.
+# ----------------------------------------------------------------------------
+locals {
+  target_vnet_name   = var.vnet_name != "" ? var.vnet_name : "mayascale-vnet"
+  target_subnet_name = var.subnet_name != "" ? var.subnet_name : "mayascale-subnet"
+}
+
+data "external" "vnet_exists" {
+  count = var.resource_group_name != "" ? 1 : 0
+  program = ["bash", "-c", <<-EOF
+    if [ "$(az network vnet show --subscription "${var.subscription_id}" --resource-group "${var.resource_group_name}" --name "${local.target_vnet_name}" --query name -o tsv 2>/dev/null)" = "${local.target_vnet_name}" ]; then
+      echo '{"exists":"true"}'
+    else
+      echo '{"exists":"false"}'
+    fi
+  EOF
+  ]
+}
+
+data "external" "subnet_exists" {
+  count = var.resource_group_name != "" ? 1 : 0
+  program = ["bash", "-c", <<-EOF
+    if [ "$(az network vnet subnet show --subscription "${var.subscription_id}" --resource-group "${var.resource_group_name}" --vnet-name "${local.target_vnet_name}" --name "${local.target_subnet_name}" --query name -o tsv 2>/dev/null)" = "${local.target_subnet_name}" ]; then
+      echo '{"exists":"true"}'
+    else
+      echo '{"exists":"false"}'
+    fi
+  EOF
+  ]
+}
+
+locals {
+  use_existing_vnet   = try(data.external.vnet_exists[0].result.exists, "false") == "true"
+  create_new_vnet     = !local.use_existing_vnet
+  use_existing_subnet = try(data.external.subnet_exists[0].result.exists, "false") == "true"
+  create_new_subnet   = !local.use_existing_subnet
+}
+
+# Reuse the shared VNet if it already exists (an earlier pair or the customer created it)
 data "azurerm_virtual_network" "selected" {
-  count               = var.vnet_name != "" ? 1 : 0
-  name                = var.vnet_name
+  count               = local.use_existing_vnet ? 1 : 0
+  name                = local.target_vnet_name
   resource_group_name = local.resource_group_name
 }
 
-# Create new VNet if not specified
+# Create the shared VNet only if it does not exist yet (first pair)
 resource "azurerm_virtual_network" "mayascale" {
-  count               = var.vnet_name == "" ? 1 : 0
-  name                = "vnet-${var.cluster_name}"
+  count               = local.create_new_vnet ? 1 : 0
+  name                = local.target_vnet_name
   location            = local.resource_group.location
   resource_group_name = local.resource_group_name
   address_space       = [var.vnet_cidr]
@@ -325,62 +366,73 @@ resource "azurerm_virtual_network" "mayascale" {
   })
 }
 
-# Use existing subnet if specified
+# Reuse the shared frontend subnet if it exists
 data "azurerm_subnet" "selected" {
-  count                = var.subnet_name != "" ? 1 : 0
-  name                 = var.subnet_name
-  virtual_network_name = var.vnet_name
+  count                = local.use_existing_subnet ? 1 : 0
+  name                 = local.target_subnet_name
+  virtual_network_name = local.target_vnet_name
   resource_group_name  = local.resource_group_name
 }
 
-# Create new subnet if not specified
+# Create the shared frontend subnet only if it does not exist yet (first pair)
 resource "azurerm_subnet" "mayascale" {
-  count                = var.subnet_name == "" ? 1 : 0
-  name                 = "subnet-${var.cluster_name}"
+  count                = local.create_new_subnet ? 1 : 0
+  name                 = local.target_subnet_name
   resource_group_name  = local.resource_group_name
-  virtual_network_name = var.vnet_name != "" ? var.vnet_name : azurerm_virtual_network.mayascale[0].name
+  virtual_network_name = local.use_existing_vnet ? data.azurerm_virtual_network.selected[0].name : azurerm_virtual_network.mayascale[0].name
   address_prefixes     = [var.subnet_cidr]
 }
 
-# Backend subnet for storage replication traffic (regional, spans all zones like GCP)
+# Backend subnet is PER-PAIR (cluster-named, cluster_slot-offset CIDR) inside the shared VNet.
+# depends_on serializes subnet ops on the shared VNet (Azure rejects concurrent subnet writes).
 resource "azurerm_subnet" "mayascale_backend" {
   name                 = "subnet-${var.cluster_name}-backend"
   resource_group_name  = local.resource_group_name
-  virtual_network_name = var.vnet_name != "" ? var.vnet_name : azurerm_virtual_network.mayascale[0].name
-  address_prefixes     = [var.backend_subnet_cidr]
+  virtual_network_name = local.use_existing_vnet ? data.azurerm_virtual_network.selected[0].name : azurerm_virtual_network.mayascale[0].name
+  address_prefixes     = [local.backend_subnet_cidr_final]
+  depends_on           = [azurerm_subnet.mayascale]
 }
 
 locals {
-  vnet_name = var.vnet_name != "" ? var.vnet_name : azurerm_virtual_network.mayascale[0].name
-  subnet_name = var.subnet_name != "" ? var.subnet_name : azurerm_subnet.mayascale[0].name
-  subnet_id = var.subnet_name != "" ? data.azurerm_subnet.selected[0].id : azurerm_subnet.mayascale[0].id
+  vnet_name         = local.use_existing_vnet ? data.azurerm_virtual_network.selected[0].name : azurerm_virtual_network.mayascale[0].name
+  subnet_name       = local.use_existing_subnet ? data.azurerm_subnet.selected[0].name : azurerm_subnet.mayascale[0].name
+  subnet_id         = local.use_existing_subnet ? data.azurerm_subnet.selected[0].id : azurerm_subnet.mayascale[0].id
   backend_subnet_id = azurerm_subnet.mayascale_backend.id
 
   # VIP address auto-generation
   # For custom-route: VIPs outside subnet range to avoid routing conflicts
   # For load-balancer: VIPs within subnet range for Azure LB frontend
-  subnet_cidr_final = var.subnet_name != "" ? data.azurerm_subnet.selected[0].address_prefixes[0] : var.subnet_cidr
-  subnet_parts = split(".", split("/", local.subnet_cidr_final)[0])
+  subnet_cidr_final = local.use_existing_subnet ? data.azurerm_subnet.selected[0].address_prefixes[0] : var.subnet_cidr
+  subnet_parts      = split(".", split("/", local.subnet_cidr_final)[0])
 
   # Generate VIP outside subnet by using different third octet
   # E.g., for 10.0.1.0/24 -> 10.0.100.x, for 192.168.1.0/24 -> 192.168.100.x
   vip_network_base = format("%s.%s.100", local.subnet_parts[0], local.subnet_parts[1])
 
+  # cluster_slot > 0: deterministic 2-contiguous-slot VIPs per pair (matches GCP); 0: random (standalone)
+  vip_offset1 = var.cluster_slot > 0 ? (var.cluster_slot * 2 + 1) : (100 + (random_integer.resource_id.result % 155))
+  vip_offset2 = var.cluster_slot > 0 ? (var.cluster_slot * 2 + 2) : (101 + (random_integer.resource_id.result % 154))
+
   vip_address_final = var.vip_address != "" ? var.vip_address : (
     var.vip_mechanism == "custom-route" ?
-      format("%s.%d", local.vip_network_base, 100 + (random_integer.resource_id.result % 155)) :
-      cidrhost(local.subnet_cidr_final, 100)
+    format("%s.%d", local.vip_network_base, local.vip_offset1) :
+    cidrhost(local.subnet_cidr_final, 100)
   )
   vip_address_2_final = var.vip_address_2 != "" ? var.vip_address_2 : (
     var.vip_mechanism == "custom-route" ?
-      format("%s.%d", local.vip_network_base, 101 + (random_integer.resource_id.result % 154)) :
-      cidrhost(local.subnet_cidr_final, 101)
+    format("%s.%d", local.vip_network_base, local.vip_offset2) :
+    cidrhost(local.subnet_cidr_final, 101)
   )
+
+  # Backend subnet is per-pair inside the (possibly shared) VNet, offset by cluster_slot so each
+  # pair's static .10/.11 stay isolated: pair 0 -> 10.0.2.0/24, pair 1 -> 10.0.3.0/24, ...
+  # (backend is node1<->node2 replication only, never shared across pairs).
+  backend_subnet_cidr_final = var.cluster_slot > 0 ? cidrsubnet(var.vnet_cidr, 8, 2 + var.cluster_slot) : var.backend_subnet_cidr
 
   # Backend IPs for storage replication (10.0.2.10, 10.0.2.11, etc.)
   backend_node_ips = [
     for i in range(var.node_count) :
-    cidrhost(var.backend_subnet_cidr, 10 + i)
+    cidrhost(local.backend_subnet_cidr_final, 10 + i)
   ]
 }
 
@@ -466,8 +518,8 @@ resource "azurerm_network_security_group" "mayascale_backend" {
     protocol                   = "*"
     source_port_range          = "*"
     destination_port_range     = "*"
-    source_address_prefix      = var.backend_subnet_cidr
-    destination_address_prefix = var.backend_subnet_cidr
+    source_address_prefix      = local.backend_subnet_cidr_final
+    destination_address_prefix = local.backend_subnet_cidr_final
   }
 
   # Allow all outbound
@@ -496,8 +548,41 @@ resource "azurerm_network_security_group" "mayascale_backend" {
 # Route Table for Custom Route VIP mechanism
 # Required for Azure to route traffic to VIP addresses
 # Name must be "mayanas-route-table" - expected by failover.pl
+# Custom-route VIP HA needs a route table for the VIP range. Its name is FIXED
+# ("mayanas-route-table"), so a second cluster deployed into a shared resource group
+# collides on create. Reuse it if it already exists (created by another cluster in this
+# RG), else create it -- same use-if-exists pattern as the resource group, subscription-
+# scoped for the same reason. Per-VIP routes are added at runtime by cluster_mayascale.sh,
+# so the table itself is just an empty container.
+locals {
+  rt_enabled      = var.vip_mechanism == "custom-route" && var.node_count > 1
+  use_existing_rt = local.rt_enabled && try(data.external.route_table_exists[0].result.exists, "false") == "true"
+  create_new_rt   = local.rt_enabled && !local.use_existing_rt
+  route_table_id  = local.rt_enabled ? (local.use_existing_rt ? data.azurerm_route_table.existing[0].id : azurerm_route_table.mayascale[0].id) : null
+}
+
+data "external" "route_table_exists" {
+  count = local.rt_enabled && var.resource_group_name != "" ? 1 : 0
+  program = ["bash", "-c", <<-EOF
+    if [ "$(az network route-table show --subscription "${var.subscription_id}" --resource-group "${var.resource_group_name}" --name "mayanas-route-table" --query name -o tsv 2>/dev/null)" = "mayanas-route-table" ]; then
+      echo '{"exists":"true"}'
+    else
+      echo '{"exists":"false"}'
+    fi
+  EOF
+  ]
+}
+
+# Reuse the route table if another cluster already created it in this shared RG
+data "azurerm_route_table" "existing" {
+  count               = local.use_existing_rt ? 1 : 0
+  name                = "mayanas-route-table"
+  resource_group_name = local.resource_group_name
+}
+
+# Create the route table only when it does not already exist
 resource "azurerm_route_table" "mayascale" {
-  count                         = var.vip_mechanism == "custom-route" && var.node_count > 1 ? 1 : 0
+  count                         = local.create_new_rt ? 1 : 0
   name                          = "mayanas-route-table"
   location                      = local.resource_group.location
   resource_group_name           = local.resource_group_name
@@ -509,19 +594,97 @@ resource "azurerm_route_table" "mayascale" {
   })
 }
 
-# Associate route table with primary subnet
+# Associate the route table with the shared frontend subnet. Only the pair that CREATES
+# the shared subnet does this (create_new_subnet); pairs that REUSE it skip the association,
+# since the subnet already carries it and re-associating would collide.
 resource "azurerm_subnet_route_table_association" "mayascale" {
-  count          = var.vip_mechanism == "custom-route" && var.node_count > 1 ? 1 : 0
+  count          = local.rt_enabled && local.create_new_subnet ? 1 : 0
   subnet_id      = local.subnet_id
-  route_table_id = azurerm_route_table.mayascale[0].id
+  route_table_id = local.route_table_id
+}
+
+# The per-VIP routes in the shared mayanas-route-table are added at RUNTIME by failover.pl
+# (cluster_mayascale.sh), so terraform never sees them. failover.pl only deletes them on a
+# graceful AzureLB stop -- a `terraform destroy` (or a VM crash) hard-deletes the VMs and
+# never runs that path, so the two VIP routes would orphan in the shared table (dead routes
+# pile up against Azure's per-table limit, and a stale /32 misroutes if its next-hop IP is
+# later reused). This module created the VIPs, so it owns their cleanup: delete this pair's
+# two routes by name on destroy. The route name is "mayascale-route-vip-<clusterid>" where
+# clusterid IS the resource_id this module assigns each node -- random_integer.resource_id
+# for node1/VIP1 and peer_resource_id for node2/VIP2 (same ids as the outputs' cluster_id).
+# Targeting by name leaves other pairs' routes (different ids) untouched; on_failure=continue
+# so a missing route, or the creator-pair's table already being gone, never blocks destroy.
+resource "null_resource" "vip_route_cleanup" {
+  count = local.rt_enabled ? 1 : 0
+
+  triggers = {
+    subscription = var.subscription_id
+    rg           = local.resource_group_name
+    route_table  = "mayanas-route-table"
+    route1       = "mayascale-route-vip-${random_integer.resource_id.result}"
+    route2       = "mayascale-route-vip-${random_integer.peer_resource_id.result}"
+  }
+
+  # On destroy terraform reverses create order, so depending on the table means our routes
+  # are removed before the table itself is (for the pair that created it).
+  depends_on = [azurerm_route_table.mayascale]
+
+  provisioner "local-exec" {
+    when       = destroy
+    on_failure = continue
+    command    = <<-EOT
+      # az is already required by this module's existence probes, but auth/CLI may be
+      # absent in some teardown contexts -- skip cleanly rather than erroring (the runtime
+      # delete-by-prefix in failover.pl is the fallback for any route left behind).
+      command -v az >/dev/null 2>&1 || exit 0
+      for rn in ${self.triggers.route1} ${self.triggers.route2}; do
+        az network route-table route delete --subscription ${self.triggers.subscription} \
+          -g ${self.triggers.rg} --route-table-name ${self.triggers.route_table} -n "$rn" >/dev/null 2>&1 || true
+      done
+    EOT
+  }
 }
 
 # ============================================================================
 # PROXIMITY PLACEMENT GROUP (for ultra-low latency)
 # ============================================================================
 
+# The PPG is created/owned by storage, but the client VM is ALSO placed in it
+# (client-testing passes this PPG's id) and the client outlives a storage
+# destroy. So Azure keeps the PPG (it still has the client as a member) when
+# storage is destroyed, and a storage redeploy then collides on create. Reuse
+# it if it already exists, else create it -- same use-if-exists pattern as the
+# route table / resource group, subscription-scoped.
+locals {
+  # try() guards the [0] index: with PPG opt-in off, ppg_exists is count=0 and the
+  # `length>0 &&` guard does NOT stop terraform evaluating the index on the empty tuple.
+  use_existing_ppg = local.enable_ppg_final && try(data.external.ppg_exists[0].result.exists, "false") == "true"
+  create_new_ppg   = local.enable_ppg_final && !local.use_existing_ppg
+  ppg_id           = local.enable_ppg_final ? (local.use_existing_ppg ? data.azurerm_proximity_placement_group.existing[0].id : azurerm_proximity_placement_group.mayascale[0].id) : null
+}
+
+data "external" "ppg_exists" {
+  count = local.enable_ppg_final && var.resource_group_name != "" ? 1 : 0
+  program = ["bash", "-c", <<-EOF
+    if [ "$(az ppg show --subscription "${var.subscription_id}" --resource-group "${var.resource_group_name}" --name "ppg-${var.cluster_name}" --query name -o tsv 2>/dev/null)" = "ppg-${var.cluster_name}" ]; then
+      echo '{"exists":"true"}'
+    else
+      echo '{"exists":"false"}'
+    fi
+  EOF
+  ]
+}
+
+# Reuse the PPG if it already exists (e.g. still held by the client VM after a storage destroy)
+data "azurerm_proximity_placement_group" "existing" {
+  count               = local.use_existing_ppg ? 1 : 0
+  name                = "ppg-${var.cluster_name}"
+  resource_group_name = local.resource_group_name
+}
+
+# Create the PPG only when it does not already exist
 resource "azurerm_proximity_placement_group" "mayascale" {
-  count               = local.enable_ppg_final ? 1 : 0
+  count               = local.create_new_ppg ? 1 : 0
   name                = "ppg-${var.cluster_name}"
   location            = local.resource_group.location
   resource_group_name = local.resource_group_name
@@ -544,12 +707,16 @@ resource "azurerm_public_ip" "mayascale" {
   allocation_method   = "Static"
   sku                 = "Standard"
 
-  # Distribute nodes across availability zones (disable zones if using PPG)
-  zones = local.enable_ppg_final ? [] : [tostring(var.availability_zones[count.index % length(var.availability_zones)])]
+  # Zone-pin only when the region has zones AND we're not colocating via PPG;
+  # a no-zones region (or PPG) places without a zone -- regional vs zonal is
+  # the POLICY tier (regional-*), not whether PPG is on.
+  zones = (local.enable_ppg_final || !local.region_supports_zones) ? [] : [tostring(var.availability_zones[count.index % length(var.availability_zones)])]
 
   lifecycle {
     precondition {
-      condition     = local.enable_ppg_final || local.region_supports_zones
+      # Only a REGIONAL (cross-zone) policy actually requires zones; a zonal-*
+      # policy is fine in a no-zones region (it just places without a zone).
+      condition     = local.region_supports_zones || !startswith(var.performance_policy, "regional-")
       error_message = "Regional (cross-zone) policies require availability zones, but region '${local.resource_group.location}' does not support zones. Either use a zonal-* policy or deploy to a zone-enabled region (westus2, eastus, centralus, etc.)."
     }
   }
@@ -629,15 +796,15 @@ locals {
   # Azure L-series have MULTIPLE physical NVMe devices (not one large device)
   nvme_count_map = {
     # Lasv4 family (AMD EPYC 9004) - varies by size
-    "Standard_L2as_v4"  = 1   # 480 GB
-    "Standard_L4as_v4"  = 2   # 960 GB (2 × 480GB)
-    "Standard_L8as_v4"  = 4   # 1.92 TB (4 × 480GB)
-    "Standard_L16as_v4" = 4   # 3.84 TB (4 × 960GB)
-    "Standard_L32as_v4" = 8   # 7.68 TB (8 × 960GB)
-    "Standard_L48as_v4" = 6   # 11.52 TB (6 × 1.92TB)
-    "Standard_L64as_v4" = 8   # 15.36 TB (8 × 1.92TB)
-    "Standard_L80as_v4" = 10  # 19.2 TB (10 × 1.92TB)
-    "Standard_L96as_v4" = 12  # 23.04 TB (12 × 1.92TB)
+    "Standard_L2as_v4"  = 1  # 480 GB
+    "Standard_L4as_v4"  = 2  # 960 GB (2 × 480GB)
+    "Standard_L8as_v4"  = 4  # 1.92 TB (4 × 480GB)
+    "Standard_L16as_v4" = 4  # 3.84 TB (4 × 960GB)
+    "Standard_L32as_v4" = 8  # 7.68 TB (8 × 960GB)
+    "Standard_L48as_v4" = 6  # 11.52 TB (6 × 1.92TB)
+    "Standard_L64as_v4" = 8  # 15.36 TB (8 × 1.92TB)
+    "Standard_L80as_v4" = 10 # 19.2 TB (10 × 1.92TB)
+    "Standard_L96as_v4" = 12 # 23.04 TB (12 × 1.92TB)
 
     # Laosv4 family (AMD EPYC optimized storage) - MORE devices per vCPU!
     "Standard_L2aos_v4"  = 3  # 1.44 TB (3 × 480GB)
@@ -649,48 +816,49 @@ locals {
     "Standard_L32aos_v4" = 12 # 23.04 TB (12 × 1.92TB)
 
     # Lsv3 family (Intel Ice Lake) - 1 device per 8 vCPU
-    "Standard_L8s_v3"  = 1    # 1.92 TB
-    "Standard_L16s_v3" = 2    # 3.84 TB (2 × 1.92TB)
-    "Standard_L32s_v3" = 4    # 7.68 TB (4 × 1.92TB)
-    "Standard_L48s_v3" = 6    # 11.52 TB (6 × 1.92TB)
-    "Standard_L64s_v3" = 8    # 15.36 TB (8 × 1.92TB)
-    "Standard_L80s_v3" = 10   # 19.2 TB (10 × 1.92TB)
+    "Standard_L8s_v3"  = 1  # 1.92 TB
+    "Standard_L16s_v3" = 2  # 3.84 TB (2 × 1.92TB)
+    "Standard_L32s_v3" = 4  # 7.68 TB (4 × 1.92TB)
+    "Standard_L48s_v3" = 6  # 11.52 TB (6 × 1.92TB)
+    "Standard_L64s_v3" = 8  # 15.36 TB (8 × 1.92TB)
+    "Standard_L80s_v3" = 10 # 19.2 TB (10 × 1.92TB)
 
     # Lsv2 family (Intel Cascade Lake) - 1 device per 8 vCPU
-    "Standard_L8s_v2"  = 1    # 1.92 TB
-    "Standard_L16s_v2" = 2    # 3.84 TB (2 × 1.92TB)
-    "Standard_L32s_v2" = 4    # 7.68 TB (4 × 1.92TB)
-    "Standard_L48s_v2" = 6    # 11.52 TB (6 × 1.92TB)
-    "Standard_L64s_v2" = 8    # 15.36 TB (8 × 1.92TB)
-    "Standard_L80s_v2" = 10   # 19.2 TB (10 × 1.92TB)
+    "Standard_L8s_v2"  = 1  # 1.92 TB
+    "Standard_L16s_v2" = 2  # 3.84 TB (2 × 1.92TB)
+    "Standard_L32s_v2" = 4  # 7.68 TB (4 × 1.92TB)
+    "Standard_L48s_v2" = 6  # 11.52 TB (6 × 1.92TB)
+    "Standard_L64s_v2" = 8  # 15.36 TB (8 × 1.92TB)
+    "Standard_L80s_v2" = 10 # 19.2 TB (10 × 1.92TB)
   }
   nvme_count = lookup(local.nvme_count_map, local.vm_size, 1)
 
   startup_script = templatefile("${path.module}/startup-cluster.sh.tpl", {
-    cluster_name         = var.cluster_name
-    deployment_type      = var.deployment_type
-    node_role           = "node1"  # Only node1 gets startup script
-    node_count          = var.node_count
-    replica_count       = var.replica_count
-    location            = var.location
-    resource_group      = local.resource_group_name
-    performance_policy  = var.performance_policy
-    vip_address         = local.vip_address_final
-    vip_address_2       = local.vip_address_2_final
-    resource_id         = random_integer.resource_id.result
-    peer_resource_id    = random_integer.peer_resource_id.result
-    secondary_private_ip = azurerm_network_interface.mayascale[1].ip_configuration[0].private_ip_address
-    nvme_count          = local.nvme_count
-    node1_name          = "${var.cluster_name}-node1-${random_id.deployment.hex}"
-    node2_name          = var.node_count > 1 ? "${var.cluster_name}-node2-${random_id.deployment.hex}" : ""
-    backend_node1_ip    = local.backend_node_ips[0]
-    backend_node2_ip    = length(local.backend_node_ips) > 1 ? local.backend_node_ips[1] : ""
-    client_nvme_port    = var.client_nvme_port
-    client_iscsi_port   = var.client_iscsi_port
-    client_protocol     = var.client_protocol
+    cluster_name           = var.cluster_name
+    deployment_type        = var.deployment_type
+    node_role              = "node1" # Only node1 gets startup script
+    node_count             = var.node_count
+    replica_count          = var.replica_count
+    location               = var.location
+    resource_group         = local.resource_group_name
+    performance_policy     = var.performance_policy
+    vip_address            = local.vip_address_final
+    vip_address_2          = local.vip_address_2_final
+    resource_id            = random_integer.resource_id.result
+    peer_resource_id       = random_integer.peer_resource_id.result
+    secondary_private_ip   = azurerm_network_interface.mayascale[1].ip_configuration[0].private_ip_address
+    nvme_count             = local.nvme_count
+    node1_name             = "${var.cluster_name}-node1-${random_id.deployment.hex}"
+    node2_name             = var.node_count > 1 ? "${var.cluster_name}-node2-${random_id.deployment.hex}" : ""
+    backend_node1_ip       = local.backend_node_ips[0]
+    backend_node2_ip       = length(local.backend_node_ips) > 1 ? local.backend_node_ips[1] : ""
+    client_nvme_port       = var.client_nvme_port
+    client_iscsi_port      = var.client_iscsi_port
+    client_protocol        = var.client_protocol
     client_exports_enabled = var.client_exports_enabled
+    ha_data                = var.ha_data ? 1 : 0
     # Share configuration
-    shares              = jsonencode(var.shares)
+    shares = jsonencode(var.shares)
     # Startup wait configuration
     mayascale_startup_wait = var.mayascale_startup_wait != null ? tostring(var.mayascale_startup_wait) : ""
   })
@@ -707,11 +875,11 @@ resource "azurerm_linux_virtual_machine" "mayascale" {
   resource_group_name = local.resource_group_name
   size                = local.vm_size
 
-  # Availability zone (skip if using proximity placement group)
-  zone = local.enable_ppg_final ? null : tostring(var.availability_zones[count.index % length(var.availability_zones)])
+  # Availability zone: skip if colocating via PPG OR the region has no zones.
+  zone = (local.enable_ppg_final || !local.region_supports_zones) ? null : tostring(var.availability_zones[count.index % length(var.availability_zones)])
 
-  # Proximity placement group for ultra-low latency
-  proximity_placement_group_id = local.enable_ppg_final ? azurerm_proximity_placement_group.mayascale[0].id : null
+  # Proximity placement group for ultra-low latency (created or reused)
+  proximity_placement_group_id = local.ppg_id
 
   # Spot instance configuration
   priority        = var.use_spot_instances ? "Spot" : "Regular"
@@ -721,7 +889,7 @@ resource "azurerm_linux_virtual_machine" "mayascale" {
   disable_password_authentication = true
 
   # Two NICs: [0]=primary (client traffic), [1]=backend (replication)
-  network_interface_ids           = [
+  network_interface_ids = [
     azurerm_network_interface.mayascale[count.index].id,
     azurerm_network_interface.mayascale_backend[count.index].id
   ]
@@ -777,10 +945,10 @@ resource "azurerm_linux_virtual_machine" "mayascale" {
   custom_data = count.index == 0 ? base64encode(local.startup_script) : null
 
   tags = merge(var.tags, {
-    Product          = "MayaScale"
-    Node             = "node${count.index + 1}"
-    PerformanceTier  = var.performance_policy
-    ClusterName      = var.cluster_name
+    Product         = "MayaScale"
+    Node            = "node${count.index + 1}"
+    PerformanceTier = var.performance_policy
+    ClusterName     = var.cluster_name
   })
 
   depends_on = [

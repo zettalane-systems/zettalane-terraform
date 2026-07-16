@@ -47,17 +47,17 @@ variable "performance_policy" {
   validation {
     condition = contains([
       # Regional (cross-zone HA) - Write IOPS ~0.83× due to cross-zone replication, ~1.5ms latency
-      "regional-basic-performance",          # 137.5K read / 46K write, L2as_v4, 1 NVMe, 12.5 Gbps, cross-zone HA
-      "regional-standard-performance",       # 360K read / 120K write, L4aos_v4, 3 NVMe, 10 Gbps, cross-zone HA
-      "regional-medium-performance",         # 720K read / 240K write, L8aos_v4, 6 NVMe, 12.5 Gbps, cross-zone HA
-      "regional-high-performance",           # 2.16M read / 720K write, L24aos_v4, 9 NVMe, 37.5 Gbps, cross-zone HA
-      "regional-ultra-performance",          # 2.88M read / 960K write, L32aos_v4, 12 NVMe, 50 Gbps, cross-zone HA
+      "regional-basic-performance",    # 137.5K read / 46K write, L2as_v4, 1 NVMe, 12.5 Gbps, cross-zone HA
+      "regional-standard-performance", # 360K read / 120K write, L4aos_v4, 3 NVMe, 10 Gbps, cross-zone HA
+      "regional-medium-performance",   # 720K read / 240K write, L8aos_v4, 6 NVMe, 12.5 Gbps, cross-zone HA
+      "regional-high-performance",     # 2.16M read / 720K write, L24aos_v4, 9 NVMe, 37.5 Gbps, cross-zone HA
+      "regional-ultra-performance",    # 2.88M read / 960K write, L32aos_v4, 12 NVMe, 50 Gbps, cross-zone HA
       # Zonal (same-zone) - Higher write IOPS (no cross-zone penalty), ~1ms latency
-      "zonal-basic-performance",             # 137.5K read / 55K write, L2as_v4, 1 NVMe, 12.5 Gbps, same-zone
-      "zonal-standard-performance",          # 360K read / 144K write, L4aos_v4, 3 NVMe, 10 Gbps, same-zone
-      "zonal-medium-performance",            # 720K read / 288K write, L8aos_v4, 6 NVMe, 12.5 Gbps, same-zone
-      "zonal-high-performance",              # 2.16M read / 864K write, L24aos_v4, 9 NVMe, 37.5 Gbps, same-zone
-      "zonal-ultra-performance"              # 2.88M read / 1.15M write, L32aos_v4, 12 NVMe, 50 Gbps, same-zone
+      "zonal-basic-performance",    # 137.5K read / 55K write, L2as_v4, 1 NVMe, 12.5 Gbps, same-zone
+      "zonal-standard-performance", # 360K read / 144K write, L4aos_v4, 3 NVMe, 10 Gbps, same-zone
+      "zonal-medium-performance",   # 720K read / 288K write, L8aos_v4, 6 NVMe, 12.5 Gbps, same-zone
+      "zonal-high-performance",     # 2.16M read / 864K write, L24aos_v4, 9 NVMe, 37.5 Gbps, same-zone
+      "zonal-ultra-performance"     # 2.88M read / 1.15M write, L32aos_v4, 12 NVMe, 50 Gbps, same-zone
     ], var.performance_policy)
     error_message = "Performance policy must be one of the predefined options: [regional|zonal]-[basic|standard|medium|high|ultra]-performance"
   }
@@ -93,22 +93,22 @@ locals {
   # Laosv4 is preferred: better bandwidth, more NVMe devices, lower cost
   instance_map = {
     basic = {
-      lasv4  = "Standard_L2as_v4"   # 2 vCPU, 16GB RAM, 1 NVMe, 12.5 Gbps (active-passive only)
-      laosv4 = "Standard_L4aos_v4"  # 4 vCPU, 32GB RAM, 3 NVMe, 10 Gbps (fallback to standard)
-      lsv3   = "Standard_L8s_v3"    # 8 vCPU, 64GB RAM, 1 NVMe, 12.5 Gbps
-      lsv2   = "Standard_L8s_v2"    # 8 vCPU, 64GB RAM, 1 NVMe, 3.2 Gbps
+      lasv4  = "Standard_L2as_v4"  # 2 vCPU, 16GB RAM, 1 NVMe, 12.5 Gbps (active-passive only)
+      laosv4 = "Standard_L4aos_v4" # 4 vCPU, 32GB RAM, 3 NVMe, 10 Gbps (fallback to standard)
+      lsv3   = "Standard_L8s_v3"   # 8 vCPU, 64GB RAM, 1 NVMe, 12.5 Gbps
+      lsv2   = "Standard_L8s_v2"   # 8 vCPU, 64GB RAM, 1 NVMe, 3.2 Gbps
     }
     standard = {
-      lasv4  = "Standard_L4as_v4"   # 4 vCPU, 32GB RAM, 2 NVMe, 12.5 Gbps
-      laosv4 = "Standard_L4aos_v4"  # 4 vCPU, 32GB RAM, 3 NVMe, 10 Gbps (BEST VALUE)
-      lsv3   = "Standard_L16s_v3"   # 16 vCPU, 128GB RAM, 2 NVMe, 12.5 Gbps
-      lsv2   = "Standard_L16s_v2"   # 16 vCPU, 128GB RAM, 2 NVMe, 6.4 Gbps
+      lasv4  = "Standard_L4as_v4"  # 4 vCPU, 32GB RAM, 2 NVMe, 12.5 Gbps
+      laosv4 = "Standard_L4aos_v4" # 4 vCPU, 32GB RAM, 3 NVMe, 10 Gbps (BEST VALUE)
+      lsv3   = "Standard_L16s_v3"  # 16 vCPU, 128GB RAM, 2 NVMe, 12.5 Gbps
+      lsv2   = "Standard_L16s_v2"  # 16 vCPU, 128GB RAM, 2 NVMe, 6.4 Gbps
     }
     medium = {
-      lasv4  = "Standard_L8as_v4"   # 8 vCPU, 64GB RAM, 4 NVMe, 12.5 Gbps
-      laosv4 = "Standard_L8aos_v4"  # 8 vCPU, 64GB RAM, 6 NVMe, 12.5 Gbps (BEST VALUE)
-      lsv3   = "Standard_L32s_v3"   # 32 vCPU, 256GB RAM, 4 NVMe, 16 Gbps
-      lsv2   = "Standard_L32s_v2"   # 32 vCPU, 256GB RAM, 4 NVMe, 12.8 Gbps
+      lasv4  = "Standard_L8as_v4"  # 8 vCPU, 64GB RAM, 4 NVMe, 12.5 Gbps
+      laosv4 = "Standard_L8aos_v4" # 8 vCPU, 64GB RAM, 6 NVMe, 12.5 Gbps (BEST VALUE)
+      lsv3   = "Standard_L32s_v3"  # 32 vCPU, 256GB RAM, 4 NVMe, 16 Gbps
+      lsv2   = "Standard_L32s_v2"  # 32 vCPU, 256GB RAM, 4 NVMe, 12.8 Gbps
     }
     high = {
       lasv4  = "Standard_L64as_v4"  # 64 vCPU, 512GB RAM, 8 NVMe, 36 Gbps
@@ -129,62 +129,62 @@ locals {
   performance_tiers = {
     # Basic: Development/test - L2as_v4 (active-passive, 1 NVMe)
     basic = {
-      network_gbps     = 12.5
-      nvme_capacity_tb = 0.48
-      nvme_devices     = 1
+      network_gbps      = 12.5
+      nvme_capacity_tb  = 0.48
+      nvme_devices      = 1
       target_read_iops  = 137500
       target_write_iops = 55000
-      target_bw_mbps = 12500
-      cost_per_month   = 25
-      deployment_mode  = "active-passive"
+      target_bw_mbps    = 12500
+      cost_per_month    = 25
+      deployment_mode   = "active-passive"
     }
 
     # Standard: Entry active-active - L4aos_v4 (3 NVMe)
     standard = {
-      network_gbps     = 10
-      nvme_capacity_tb = 2.88
-      nvme_devices     = 3
+      network_gbps      = 10
+      nvme_capacity_tb  = 2.88
+      nvme_devices      = 3
       target_read_iops  = 360000
       target_write_iops = 144000
-      target_bw_mbps = 10000
-      cost_per_month   = 45
-      deployment_mode  = "active-active"
+      target_bw_mbps    = 10000
+      cost_per_month    = 45
+      deployment_mode   = "active-active"
     }
 
     # Medium: Production workloads - L8aos_v4 (6 NVMe)
     medium = {
-      network_gbps     = 12.5
-      nvme_capacity_tb = 5.76
-      nvme_devices     = 6
+      network_gbps      = 12.5
+      nvme_capacity_tb  = 5.76
+      nvme_devices      = 6
       target_read_iops  = 720000
       target_write_iops = 288000
-      target_bw_mbps = 12500
-      cost_per_month   = 100
-      deployment_mode  = "active-active"
+      target_bw_mbps    = 12500
+      cost_per_month    = 100
+      deployment_mode   = "active-active"
     }
 
     # High: High-performance workloads - L24aos_v4 (9 NVMe)
     high = {
-      network_gbps     = 37.5
-      nvme_capacity_tb = 17.28
-      nvme_devices     = 9
+      network_gbps      = 37.5
+      nvme_capacity_tb  = 17.28
+      nvme_devices      = 9
       target_read_iops  = 2160000
       target_write_iops = 864000
-      target_bw_mbps = 37500
-      cost_per_month   = 300
-      deployment_mode  = "active-active"
+      target_bw_mbps    = 37500
+      cost_per_month    = 300
+      deployment_mode   = "active-active"
     }
 
     # Ultra: Maximum performance - L32aos_v4 (12 NVMe)
     ultra = {
-      network_gbps     = 50
-      nvme_capacity_tb = 23.04
-      nvme_devices     = 12
+      network_gbps      = 50
+      nvme_capacity_tb  = 23.04
+      nvme_devices      = 12
       target_read_iops  = 2880000
       target_write_iops = 1152000
-      target_bw_mbps = 50000
-      cost_per_month   = 400
-      deployment_mode  = "active-active"
+      target_bw_mbps    = 50000
+      cost_per_month    = 400
+      deployment_mode   = "active-active"
     }
   }
 
@@ -274,6 +274,16 @@ variable "enable_accelerated_networking" {
   default     = true
 }
 
+variable "cluster_slot" {
+  description = "Index of this HA pair within a shared VNet, used to deterministically partition VIPs and the backend subnet CIDR (matches GCP/AWS multi-pair). 0 = first/standalone (random VIP, backend 10.0.2.0/24). 1,2,... = additional pairs sharing the VNet, each claiming 2 contiguous VIPs + its own backend /24 (10.0.{2+cluster_slot}.0/24). Range: 0-126."
+  type        = number
+  default     = 0
+  validation {
+    condition     = var.cluster_slot >= 0 && var.cluster_slot <= 126
+    error_message = "cluster_slot must be between 0 and 126 (2 VIP slots per pair, one /24 backend per pair within a /16 VNet)."
+  }
+}
+
 variable "vip_address" {
   description = "Virtual IP address for cluster (auto-generated from subnet if empty)"
   type        = string
@@ -319,9 +329,9 @@ variable "zone_strategy" {
 }
 
 variable "enable_proximity_placement_group" {
-  description = "Enable proximity placement group for ultra-low latency between nodes (automatically disabled for regional cross-zone policies)"
+  description = "Enable proximity placement group for ultra-low latency between nodes (automatically disabled for regional cross-zone policies). OPT-IN: created only when explicitly requested (validate-mayascale.sh --colocation)."
   type        = bool
-  default     = true
+  default     = false
 }
 
 # ============================================================================
@@ -470,6 +480,12 @@ variable "client_exports_enabled" {
   default     = true
 }
 
+variable "ha_data" {
+  description = "Enable per-pool HA shared state (Samba passdb + NFS lock recovery) so SMB auth and NFS NLM/NFSv4 locks survive a takeover"
+  type        = bool
+  default     = true
+}
+
 variable "client_nvme_port" {
   description = "Starting port for NVMe-oF client connections"
   type        = number
@@ -499,13 +515,13 @@ variable "client_access_control" {
 }
 
 variable "deployment_type" {
-  description = "Deployment architecture: 'active-active' (MD RAID + ZFS) or 'zfs-active-active' (ZFS mirror vdevs, FSx for OpenZFS equivalent)"
+  description = "Deployment architecture: 'active-active' (MD RAID + ZFS), 'zfs-active-active' (ZFS mirror vdevs, FSx for OpenZFS equivalent), or 'vg-active-active' (LVM VG on the MD-RAID backing for Kubernetes CSI -- ZettaLane CSI driver provisioner csi-mayascale.zettalane.com carves per-PVC LVs + per-volume NVMe-oF subsystems; the default data-node-X block auto-export is skipped and a CSI nvmet portal group is created instead)"
   type        = string
   default     = "active-active"
 
   validation {
-    condition     = contains(["active-active", "zfs-active-active"], var.deployment_type)
-    error_message = "deployment_type must be either 'active-active' or 'zfs-active-active'"
+    condition     = contains(["active-active", "zfs-active-active", "vg-active-active"], var.deployment_type)
+    error_message = "deployment_type must be 'active-active', 'zfs-active-active', or 'vg-active-active'"
   }
 }
 
@@ -515,10 +531,10 @@ variable "shares" {
   type = list(object({
     name         = string
     recordsize   = string
-    export       = string  # "nfs", "nfs3", "smb", or "multi"
+    export       = string # "nfs", "nfs3", "smb", or "multi"
     nfs_options  = optional(string, "")
     smb_options  = optional(string, "")
-    smb_profile  = optional(string, "")  # "posix", "windows", or "multiprotocol"
+    smb_profile  = optional(string, "") # "posix", "windows", or "multiprotocol"
     smb_user     = optional(string, "")
     smb_password = optional(string, "")
     smb_uid      = optional(string, "")
