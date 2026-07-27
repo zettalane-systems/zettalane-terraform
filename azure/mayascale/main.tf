@@ -386,6 +386,7 @@ resource "azurerm_subnet" "mayascale" {
 # Backend subnet is PER-PAIR (cluster-named, cluster_slot-offset CIDR) inside the shared VNet.
 # depends_on serializes subnet ops on the shared VNet (Azure rejects concurrent subnet writes).
 resource "azurerm_subnet" "mayascale_backend" {
+  count                = local.node_count > 1 ? 1 : 0
   name                 = "subnet-${var.cluster_name}-backend"
   resource_group_name  = local.resource_group_name
   virtual_network_name = local.use_existing_vnet ? data.azurerm_virtual_network.selected[0].name : azurerm_virtual_network.mayascale[0].name
@@ -394,10 +395,16 @@ resource "azurerm_subnet" "mayascale_backend" {
 }
 
 locals {
-  vnet_name         = local.use_existing_vnet ? data.azurerm_virtual_network.selected[0].name : azurerm_virtual_network.mayascale[0].name
-  subnet_name       = local.use_existing_subnet ? data.azurerm_subnet.selected[0].name : azurerm_subnet.mayascale[0].name
-  subnet_id         = local.use_existing_subnet ? data.azurerm_subnet.selected[0].id : azurerm_subnet.mayascale[0].id
-  backend_subnet_id = azurerm_subnet.mayascale_backend.id
+  vnet_name   = local.use_existing_vnet ? data.azurerm_virtual_network.selected[0].name : azurerm_virtual_network.mayascale[0].name
+  subnet_name = local.use_existing_subnet ? data.azurerm_subnet.selected[0].name : azurerm_subnet.mayascale[0].name
+  subnet_id   = local.use_existing_subnet ? data.azurerm_subnet.selected[0].id : azurerm_subnet.mayascale[0].id
+  # topology from deployment_type: *-single -> 1 node, else 2 (active-active). single-node
+  # drops the whole replication backend (no subnet/NSG/NIC). Mirrors azure/mayanas.
+  node_count        = endswith(var.deployment_type, "-single") ? 1 : 2
+  backend_subnet_id = local.node_count > 1 ? azurerm_subnet.mayascale_backend[0].id : null
+  # csi control endpoint: active-active uses the floating VIP; single-node has NO VIP
+  # (nothing binds/routes it), so the driver must reach configd at node1's real private IP.
+  csi_node1_vip = local.node_count > 1 ? local.vip_address_final : azurerm_network_interface.mayascale[0].private_ip_address
 
   # VIP address auto-generation
   # For custom-route: VIPs outside subnet range to avoid routing conflicts
@@ -431,7 +438,7 @@ locals {
 
   # Backend IPs for storage replication (10.0.2.10, 10.0.2.11, etc.)
   backend_node_ips = [
-    for i in range(var.node_count) :
+    for i in range(local.node_count) :
     cidrhost(local.backend_subnet_cidr_final, 10 + i)
   ]
 }
@@ -505,6 +512,7 @@ resource "azurerm_network_security_group" "mayascale" {
 
 # Backend NSG for storage replication traffic
 resource "azurerm_network_security_group" "mayascale_backend" {
+  count               = local.node_count > 1 ? 1 : 0
   name                = "nsg-${var.cluster_name}-backend-${random_id.suffix.hex}"
   location            = local.resource_group.location
   resource_group_name = local.resource_group_name
@@ -555,7 +563,7 @@ resource "azurerm_network_security_group" "mayascale_backend" {
 # scoped for the same reason. Per-VIP routes are added at runtime by cluster_mayascale.sh,
 # so the table itself is just an empty container.
 locals {
-  rt_enabled      = var.vip_mechanism == "custom-route" && var.node_count > 1
+  rt_enabled      = var.vip_mechanism == "custom-route" && local.node_count > 1
   use_existing_rt = local.rt_enabled && try(data.external.route_table_exists[0].result.exists, "false") == "true"
   create_new_rt   = local.rt_enabled && !local.use_existing_rt
   route_table_id  = local.rt_enabled ? (local.use_existing_rt ? data.azurerm_route_table.existing[0].id : azurerm_route_table.mayascale[0].id) : null
@@ -700,7 +708,7 @@ resource "azurerm_proximity_placement_group" "mayascale" {
 # ============================================================================
 
 resource "azurerm_public_ip" "mayascale" {
-  count               = var.assign_public_ip ? var.node_count : 0
+  count               = var.assign_public_ip ? local.node_count : 0
   name                = "pip-${var.cluster_name}-node${count.index + 1}-${random_id.deployment.hex}"
   location            = local.resource_group.location
   resource_group_name = local.resource_group_name
@@ -732,7 +740,7 @@ resource "azurerm_public_ip" "mayascale" {
 # ============================================================================
 
 resource "azurerm_network_interface" "mayascale" {
-  count                          = var.node_count
+  count                          = local.node_count
   name                           = "nic-${var.cluster_name}-node${count.index + 1}-${random_id.deployment.hex}"
   location                       = local.resource_group.location
   resource_group_name            = local.resource_group_name
@@ -753,14 +761,14 @@ resource "azurerm_network_interface" "mayascale" {
 
 # Associate NSG with network interfaces
 resource "azurerm_network_interface_security_group_association" "mayascale" {
-  count                     = var.node_count
+  count                     = local.node_count
   network_interface_id      = azurerm_network_interface.mayascale[count.index].id
   network_security_group_id = azurerm_network_security_group.mayascale.id
 }
 
 # Backend network interfaces for storage replication traffic
 resource "azurerm_network_interface" "mayascale_backend" {
-  count                          = var.node_count
+  count                          = local.node_count > 1 ? local.node_count : 0
   name                           = "nic-${var.cluster_name}-node${count.index + 1}-backend-${random_id.deployment.hex}"
   location                       = local.resource_group.location
   resource_group_name            = local.resource_group_name
@@ -782,9 +790,9 @@ resource "azurerm_network_interface" "mayascale_backend" {
 
 # Associate backend NSG with backend network interfaces
 resource "azurerm_network_interface_security_group_association" "mayascale_backend" {
-  count                     = var.node_count
+  count                     = local.node_count > 1 ? local.node_count : 0
   network_interface_id      = azurerm_network_interface.mayascale_backend[count.index].id
-  network_security_group_id = azurerm_network_security_group.mayascale_backend.id
+  network_security_group_id = azurerm_network_security_group.mayascale_backend[0].id
 }
 
 # ============================================================================
@@ -837,7 +845,7 @@ locals {
     cluster_name           = var.cluster_name
     deployment_type        = var.deployment_type
     node_role              = "node1" # Only node1 gets startup script
-    node_count             = var.node_count
+    node_count             = local.node_count
     replica_count          = var.replica_count
     location               = var.location
     resource_group         = local.resource_group_name
@@ -846,10 +854,10 @@ locals {
     vip_address_2          = local.vip_address_2_final
     resource_id            = random_integer.resource_id.result
     peer_resource_id       = random_integer.peer_resource_id.result
-    secondary_private_ip   = azurerm_network_interface.mayascale[1].ip_configuration[0].private_ip_address
+    secondary_private_ip   = local.node_count > 1 ? azurerm_network_interface.mayascale[1].ip_configuration[0].private_ip_address : ""
     nvme_count             = local.nvme_count
     node1_name             = "${var.cluster_name}-node1-${random_id.deployment.hex}"
-    node2_name             = var.node_count > 1 ? "${var.cluster_name}-node2-${random_id.deployment.hex}" : ""
+    node2_name             = local.node_count > 1 ? "${var.cluster_name}-node2-${random_id.deployment.hex}" : ""
     backend_node1_ip       = local.backend_node_ips[0]
     backend_node2_ip       = length(local.backend_node_ips) > 1 ? local.backend_node_ips[1] : ""
     client_nvme_port       = var.client_nvme_port
@@ -876,7 +884,7 @@ locals {
 # ============================================================================
 
 resource "azurerm_linux_virtual_machine" "mayascale" {
-  count               = var.node_count
+  count               = local.node_count
   name                = "${var.cluster_name}-node${count.index + 1}-${random_id.deployment.hex}"
   location            = local.resource_group.location
   resource_group_name = local.resource_group_name
@@ -895,10 +903,12 @@ resource "azurerm_linux_virtual_machine" "mayascale" {
 
   disable_password_authentication = true
 
-  # Two NICs: [0]=primary (client traffic), [1]=backend (replication)
-  network_interface_ids = [
+  # NICs: [0]=primary (client traffic); [1]=backend (replication) only when multi-node
+  network_interface_ids = local.node_count > 1 ? [
     azurerm_network_interface.mayascale[count.index].id,
     azurerm_network_interface.mayascale_backend[count.index].id
+    ] : [
+    azurerm_network_interface.mayascale[count.index].id
   ]
 
   # OS Disk
@@ -970,7 +980,7 @@ resource "azurerm_linux_virtual_machine" "mayascale" {
 
 # Reader role for resource discovery
 resource "azurerm_role_assignment" "reader" {
-  count                = var.node_count
+  count                = local.node_count
   scope                = local.resource_group.id
   role_definition_name = "Reader"
   principal_id         = azurerm_linux_virtual_machine.mayascale[count.index].identity[0].principal_id
@@ -978,7 +988,7 @@ resource "azurerm_role_assignment" "reader" {
 
 # Network Contributor for VIP route table management
 resource "azurerm_role_assignment" "network_contributor" {
-  count                = var.node_count
+  count                = local.node_count
   scope                = local.resource_group.id
   role_definition_name = "Network Contributor"
   principal_id         = azurerm_linux_virtual_machine.mayascale[count.index].identity[0].principal_id
@@ -986,7 +996,7 @@ resource "azurerm_role_assignment" "network_contributor" {
 
 # Subscription-level Reader role for Azure API operations
 resource "azurerm_role_assignment" "subscription_reader" {
-  count                = var.node_count
+  count                = local.node_count
   scope                = "/subscriptions/${data.azurerm_client_config.current.subscription_id}"
   role_definition_name = "Reader"
   principal_id         = azurerm_linux_virtual_machine.mayascale[count.index].identity[0].principal_id
@@ -994,7 +1004,7 @@ resource "azurerm_role_assignment" "subscription_reader" {
 
 # Virtual Machine Contributor role for disk operations during failover
 resource "azurerm_role_assignment" "vm_contributor" {
-  count                = var.node_count
+  count                = local.node_count
   scope                = local.resource_group.id
   role_definition_name = "Virtual Machine Contributor"
   principal_id         = azurerm_linux_virtual_machine.mayascale[count.index].identity[0].principal_id

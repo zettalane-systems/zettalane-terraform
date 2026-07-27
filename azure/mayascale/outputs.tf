@@ -39,7 +39,7 @@ output "performance_tier" {
     expected_bw_mbps    = local.selected_tier.target_bw_mbps
     deployment_mode     = local.selected_tier.deployment_mode
     cost_per_node       = local.selected_tier.cost_per_month
-    total_cost          = local.selected_tier.cost_per_month * var.node_count
+    total_cost          = local.selected_tier.cost_per_month * local.node_count
   }
 }
 
@@ -50,7 +50,7 @@ output "performance_tier" {
 output "nodes" {
   description = "List of all storage nodes with details"
   value = [
-    for i in range(var.node_count) : {
+    for i in range(local.node_count) : {
       name        = azurerm_linux_virtual_machine.mayascale[i].name
       external_ip = var.assign_public_ip ? azurerm_public_ip.mayascale[i].ip_address : null
       internal_ip = azurerm_network_interface.mayascale[i].private_ip_address
@@ -72,7 +72,7 @@ output "primary_node" {
 
 output "secondary_node" {
   description = "Secondary storage node (node1) details if exists"
-  value = var.node_count > 1 ? {
+  value = local.node_count > 1 ? {
     name        = azurerm_linux_virtual_machine.mayascale[1].name
     external_ip = var.assign_public_ip ? azurerm_public_ip.mayascale[1].ip_address : null
     internal_ip = azurerm_network_interface.mayascale[1].private_ip_address
@@ -98,17 +98,17 @@ output "node1_name" {
 
 output "node2_public_ip" {
   description = "Node2 public IP address"
-  value       = var.node_count > 1 && var.assign_public_ip ? azurerm_public_ip.mayascale[1].ip_address : null
+  value       = local.node_count > 1 && var.assign_public_ip ? azurerm_public_ip.mayascale[1].ip_address : null
 }
 
 output "node2_private_ip" {
   description = "Node2 private IP address"
-  value       = var.node_count > 1 ? azurerm_network_interface.mayascale[1].private_ip_address : ""
+  value       = local.node_count > 1 ? azurerm_network_interface.mayascale[1].private_ip_address : ""
 }
 
 output "node2_name" {
   description = "Node2 VM name"
-  value       = var.node_count > 1 ? azurerm_linux_virtual_machine.mayascale[1].name : ""
+  value       = local.node_count > 1 ? azurerm_linux_virtual_machine.mayascale[1].name : ""
 }
 
 output "vip1_address" {
@@ -168,7 +168,7 @@ output "vip_addresses" {
 output "ssh_commands" {
   description = "SSH commands to connect to each node"
   value = {
-    for i in range(var.node_count) :
+    for i in range(local.node_count) :
     "node${i + 1}" => var.assign_public_ip ? "ssh ${var.admin_username}@${azurerm_public_ip.mayascale[i].ip_address}" : "az ssh vm -n ${azurerm_linux_virtual_machine.mayascale[i].name} -g ${local.resource_group_name}"
   }
 }
@@ -180,7 +180,7 @@ output "ssh_commands" {
 output "cluster_config" {
   description = "Cluster configuration summary"
   value = {
-    node_count          = var.node_count
+    node_count          = local.node_count
     replica_count       = var.replica_count
     placement_group     = local.enable_ppg_final # Auto-enabled for zonal, auto-disabled for regional
     placement_group_id  = local.ppg_id
@@ -196,12 +196,12 @@ output "cluster_config" {
 output "estimated_performance" {
   description = "Estimated cluster performance (aggregate across all nodes)"
   value = {
-    total_read_iops        = local.selected_tier.target_read_iops * var.node_count
-    total_write_iops       = local.selected_tier.target_write_iops * var.node_count
-    total_bandwidth_mbps   = local.selected_tier.target_bw_mbps * var.node_count
-    total_bandwidth_gbps   = (local.selected_tier.target_bw_mbps * var.node_count) / 1000
-    total_nvme_capacity_tb = local.selected_tier.nvme_capacity_tb * var.node_count
-    usable_capacity_tb     = (local.selected_tier.nvme_capacity_tb * var.node_count) / var.replica_count
+    total_read_iops        = local.selected_tier.target_read_iops * local.node_count
+    total_write_iops       = local.selected_tier.target_write_iops * local.node_count
+    total_bandwidth_mbps   = local.selected_tier.target_bw_mbps * local.node_count
+    total_bandwidth_gbps   = (local.selected_tier.target_bw_mbps * local.node_count) / 1000
+    total_nvme_capacity_tb = local.selected_tier.nvme_capacity_tb * local.node_count
+    usable_capacity_tb     = (local.selected_tier.nvme_capacity_tb * local.node_count) / var.replica_count
     deployment_mode        = local.selected_tier.deployment_mode
   }
 }
@@ -214,8 +214,8 @@ output "cost_estimate" {
   description = "Monthly cost estimate (spot pricing)"
   value = {
     per_node_monthly = local.selected_tier.cost_per_month
-    total_monthly    = local.selected_tier.cost_per_month * var.node_count
-    total_annual     = local.selected_tier.cost_per_month * var.node_count * 12
+    total_monthly    = local.selected_tier.cost_per_month * local.node_count
+    total_annual     = local.selected_tier.cost_per_month * local.node_count * 12
     pricing_model    = var.use_spot_instances ? "Spot (66% discount)" : "On-Demand"
   }
 }
@@ -259,7 +259,7 @@ output "deployment_summary" {
     cluster_name          = var.cluster_name
     deployment_id         = local.resource_group_name
     performance_policy    = var.performance_policy
-    availability_strategy = var.node_count > 1 ? "cross-zone" : "single-zone"
+    availability_strategy = local.node_count > 1 ? "cross-zone" : "single-zone"
 
     instance_type = local.vm_size
     vcpus = lookup({
@@ -291,8 +291,8 @@ output "deployment_summary" {
     target_write_latency_us = 1000
     target_bandwidth_mbps   = local.selected_tier.target_bw_mbps
 
-    zone_primary   = var.node_count > 0 ? azurerm_linux_virtual_machine.mayascale[0].zone : ""
-    zone_secondary = var.node_count > 1 ? azurerm_linux_virtual_machine.mayascale[1].zone : ""
+    zone_primary   = local.node_count > 0 ? azurerm_linux_virtual_machine.mayascale[0].zone : ""
+    zone_secondary = local.node_count > 1 ? azurerm_linux_virtual_machine.mayascale[1].zone : ""
     region         = local.resource_group.location
 
     cost_tier        = local.selected_tier.deployment_mode
@@ -318,7 +318,7 @@ output "deployment_info" {
   description = "Structured deployment information for automation scripts"
   value = {
     cluster_name       = var.cluster_name
-    node_count         = var.node_count
+    node_count         = local.node_count
     region             = local.resource_group.location
     availability_zones = [for node in azurerm_linux_virtual_machine.mayascale : node.zone if node.zone != null && node.zone != ""]
     machine_type       = local.vm_size
@@ -326,14 +326,14 @@ output "deployment_info" {
     node1_zone         = azurerm_linux_virtual_machine.mayascale[0].zone
     node1_external_ip  = var.assign_public_ip ? azurerm_public_ip.mayascale[0].ip_address : null
     node1_internal_ip  = azurerm_network_interface.mayascale[0].private_ip_address
-    node2_name         = var.node_count > 1 ? azurerm_linux_virtual_machine.mayascale[1].name : ""
-    node2_zone         = var.node_count > 1 ? azurerm_linux_virtual_machine.mayascale[1].zone : ""
-    node2_external_ip  = var.node_count > 1 && var.assign_public_ip ? azurerm_public_ip.mayascale[1].ip_address : null
-    node2_internal_ip  = var.node_count > 1 ? azurerm_network_interface.mayascale[1].private_ip_address : ""
+    node2_name         = local.node_count > 1 ? azurerm_linux_virtual_machine.mayascale[1].name : ""
+    node2_zone         = local.node_count > 1 ? azurerm_linux_virtual_machine.mayascale[1].zone : ""
+    node2_external_ip  = local.node_count > 1 && var.assign_public_ip ? azurerm_public_ip.mayascale[1].ip_address : null
+    node2_internal_ip  = local.node_count > 1 ? azurerm_network_interface.mayascale[1].private_ip_address : ""
     vip_primary        = local.vip_address_final
     vip_secondary      = local.vip_address_2_final
-    total_nvme_count   = local.selected_tier.nvme_devices * var.node_count
-    total_capacity_gb  = local.selected_tier.nvme_capacity_tb * 1000 * var.node_count
+    total_nvme_count   = local.selected_tier.nvme_devices * local.node_count
+    total_capacity_gb  = local.selected_tier.nvme_capacity_tb * 1000 * local.node_count
   }
 }
 
@@ -350,8 +350,8 @@ output "csi_backend" {
     # options.driver -- selects the product/instance (block backend, RWO).
     driver = "mayascale"
     # Control-plane VIP list (key named for the driver): control failover AND
-    # pool/clusterid/VIP discovery. MayaScale is always 2-node active-active.
-    mayascale = join(",", [local.vip_address_final, local.vip_address_2_final])
+    # pool/clusterid/VIP discovery. Single-node -> one VIP; active-active -> both.
+    mayascale = local.node_count > 1 ? join(",", [local.vip_address_final, local.vip_address_2_final]) : local.csi_node1_vip
 
     # CSI pools per node, deterministically named by cluster_mayascale.sh and keyed by
     # deployment_type. The driver discovers each pool's kind (V_VG / V_THINPOOL / V_ZPOOL)
@@ -362,15 +362,28 @@ output "csi_backend" {
     #   zfs-active-active -> one zpool per node, data-pool-{1,2} (data-pool-$((idx%2+1)),
     #                        cluster_mayascale.sh:~830). Driver carves zvols (block) or zfs
     #                        datasets (file). fs volumes are labeled data-pool-N-<name>.
-    pools = var.deployment_type == "zfs-active-active" ? tomap({
-      "data-pool-1" = { clusterid = random_integer.resource_id.result, vip = local.vip_address_final }
-      "data-pool-2" = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2_final }
-      }) : tomap({
-      "${var.cluster_name}-vg-node1"     = { clusterid = random_integer.resource_id.result, vip = local.vip_address_final }
-      "${var.cluster_name}-vg-node2"     = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2_final }
-      "${var.cluster_name}-vgpool-node1" = { clusterid = random_integer.resource_id.result, vip = local.vip_address_final }
-      "${var.cluster_name}-vgpool-node2" = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2_final }
-    })
+    # substrate from prefix (zfs* -> zpool data-pool-N; else VG + thinpool); node count from
+    # deployment_type (*-single -> node1 only). Matches the driver's V_ZPOOL/V_VG discovery.
+    # single-node (the `:` branches) is standalone -> clusterid 0 (no HA); active-active
+    # -> per-node random resource ids. The outer node_count check already picks the branch.
+    pools = startswith(var.deployment_type, "zfs") ? (
+      local.node_count > 1 ? tomap({
+        "data-pool-1" = { clusterid = random_integer.resource_id.result, vip = local.csi_node1_vip }
+        "data-pool-2" = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2_final }
+        }) : tomap({
+        "data-pool-1" = { clusterid = 0, vip = local.csi_node1_vip }
+      })
+      ) : (
+      local.node_count > 1 ? tomap({
+        "${var.cluster_name}-vg-node1"     = { clusterid = random_integer.resource_id.result, vip = local.csi_node1_vip }
+        "${var.cluster_name}-vg-node2"     = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2_final }
+        "${var.cluster_name}-vgpool-node1" = { clusterid = random_integer.resource_id.result, vip = local.csi_node1_vip }
+        "${var.cluster_name}-vgpool-node2" = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2_final }
+        }) : tomap({
+        "${var.cluster_name}-vg-node1"     = { clusterid = 0, vip = local.csi_node1_vip }
+        "${var.cluster_name}-vgpool-node1" = { clusterid = 0, vip = local.csi_node1_vip }
+      })
+    )
 
     # zone -> data VIP, for the driver's zone-aware topology (zone_cluster_map).
     # AKS sets topology.kubernetes.io/zone = "<region>-<zone>" (e.g. eastus-1), so key

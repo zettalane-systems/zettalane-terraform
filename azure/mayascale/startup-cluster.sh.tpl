@@ -173,9 +173,16 @@ export MAYASCALE_BACKEND_PRIMARY_IP="$PRIMARY_BACKEND_IP"
 export MAYASCALE_BACKEND_SECONDARY_IP="$SECONDARY_BACKEND_IP"
 export MAYASCALE_CLOUD_PROVIDER="azure"
 
-# Required array variables (space-separated)
+# Required array variables (space-separated). Single-node -> one id / one VIP, no peer
+# (mirrors azure/mayanas). MAYASCALE_DEPLOYMENT_TYPE=*-single is the single-node signal;
+# SECONDARY_INSTANCE / PEER_IP / SECONDARY_BACKEND_IP are already empty for single-node.
+%{ if node_count > 1 ~}
 export MAYASCALE_RESOURCE_ID="${resource_id} ${peer_resource_id}"
 export MAYASCALE_VIP_ADDRESS="${vip_address} ${vip_address_2}"
+%{ else ~}
+export MAYASCALE_RESOURCE_ID="0"
+export MAYASCALE_VIP_ADDRESS="${vip_address}"
+%{ endif ~}
 
 # Additional configuration variables
 export MAYASCALE_HA_DATA="${ha_data}"
@@ -197,7 +204,11 @@ export MAYASCALE_S3_SECRET_KEY="$STORAGE_ACCESS_KEY"
 export MAYASCALE_COLD_BUCKETS_NODE1="${bucket_node1}"
 export MAYASCALE_COLD_BUCKETS_NODE2="${bucket_node2}"
 export MAYASCALE_NVME_COUNT="${nvme_count}"
+%{ if node_count > 1 ~}
 export MAYASCALE_CLUSTER_ID="${resource_id}"
+%{ else ~}
+export MAYASCALE_CLUSTER_ID="0"
+%{ endif ~}
 %{ if mayascale_startup_wait != "" ~}
 export MAYASCALE_STARTUP_WAIT="${mayascale_startup_wait}"
 %{ endif ~}
@@ -229,8 +240,13 @@ echo "$(date): Deployment context saved - source /opt/mayastor/config/.startup-c
 echo "$(date): Loading deployment context for cluster setup..."
 source /opt/mayastor/config/.startup-config
 
-# Call MayaScale setup script (MayaScale uses cluster_mayascale.sh for composable storage)
+# Setup script: cluster_mayascale.sh for 2-node active-active; standalone_mayascale.sh for
+# single-node (no peer/mirror/replication). Mirrors azure/mayanas (standalone_setup.sh vs cluster_setup*).
+%{ if node_count > 1 ~}
 MAYASCALE_SETUP_SCRIPT="/opt/mayastor/config/cluster_mayascale.sh"
+%{ else ~}
+MAYASCALE_SETUP_SCRIPT="/opt/mayastor/config/standalone_mayascale.sh"
+%{ endif ~}
 
 if [ ! -f "$MAYASCALE_SETUP_SCRIPT" ]; then
     echo "$(date): WARNING: MayaScale setup script not found at $MAYASCALE_SETUP_SCRIPT"

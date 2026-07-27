@@ -103,6 +103,7 @@ BUCKET_COUNT="0"   # -b: object buckets per node for the objbacker cold tier (0 
 FSX_MODE="false"   # --fsx [zfs]: ZFS mirror mode (FSx for OpenZFS equivalent)
 VG_MODE="false"    # --fsx vg: LVM VG on MD-RAID for Kubernetes CSI (vg-active-active)
 CSI_MODE="false"   # --csi [mayanas|mayascale]: stage CSI (csi_backend.json + scripts) regardless of fsx substrate
+DEPLOY_TYPE_OVERRIDE="" # --fsx zfs-single|vg-single: single-node deployment_type override (azure only)
 CSI_DRIVER="mayascale"  # CSI product when --csi: mayascale=block/zvol, mayanas=file/NFS
 ENABLE_COLOCATION="false" # --colocation: opt-in compact placement group (zonal only); OFF by default (functional tests need no rack locality + avoids placement-policy lifecycle friction)
 CLUSTER_SLOT="0"   # --cluster-slot N: deterministic VIP partition (+ Azure backend subnet) for multi-pair in one shared VNet/VPC; 0=standalone (random VIP). All clouds: VIP. Azure also: backend /24.
@@ -395,8 +396,10 @@ while [[ $# -gt 0 ]]; do
             case "${2:-}" in
                 vg)  VG_MODE="true";  shift 2 ;;
                 zfs) FSX_MODE="true"; shift 2 ;;
+                zfs-single) FSX_MODE="true"; DEPLOY_TYPE_OVERRIDE="zfs-single"; shift 2 ;;
+                vg-single)  VG_MODE="true";  DEPLOY_TYPE_OVERRIDE="vg-single";  shift 2 ;;
                 ""|--*) FSX_MODE="true"; shift ;;
-                *) fail "--fsx takes 'zfs' or 'vg' (got '$2')"; usage ;;
+                *) fail "--fsx takes 'zfs', 'vg', 'zfs-single', or 'vg-single' (got '$2')"; usage ;;
             esac
             ;;
         --cluster-slot)
@@ -426,6 +429,11 @@ fi
 # buckets, so a non-zero count there would silently do nothing.
 if [ "$BUCKET_COUNT" -gt 0 ] && [ "$CLOUD" != "azure" ]; then
     fail "--bucket-count is only supported on azure (got: $CLOUD)"
+fi
+
+# Single-node (zfs-single / vg-single) exists only in azure/mayascale for now.
+if [ -n "$DEPLOY_TYPE_OVERRIDE" ] && [ "$CLOUD" != "azure" ]; then
+    fail "--fsx $DEPLOY_TYPE_OVERRIDE (single-node) is only supported on azure (got: $CLOUD)"
 fi
 
 # CSI needs a provisionable substrate. The default (active-active = MD-RAID block whose
@@ -907,7 +915,7 @@ project_id = "$PROJECT_ID"
 region = "$REGION"
 cluster_name = "$DEPLOYMENT_NAME"
 performance_policy = "$POLICY"
-deployment_type = "$([ "$VG_MODE" = "true" ] && echo "vg-active-active" || ([ "$FSX_MODE" = "true" ] && echo "zfs-active-active" || echo "active-active"))"
+deployment_type = "${DEPLOY_TYPE_OVERRIDE:-$([ "$VG_MODE" = "true" ] && echo "vg-active-active" || ([ "$FSX_MODE" = "true" ] && echo "zfs-active-active" || echo "active-active"))}"
 zone = "$ZONE"
 machine_type = "$RESOLVED_MACHINE_TYPE"
 use_spot_vms = $USE_SPOT
@@ -927,7 +935,7 @@ EOF
 key_pair_name = "$KEY_PAIR_NAME"
 cluster_name = "$DEPLOYMENT_NAME"
 performance_policy = "$POLICY"
-deployment_type = "$([ "$VG_MODE" = "true" ] && echo "vg-active-active" || ([ "$FSX_MODE" = "true" ] && echo "zfs-active-active" || echo "active-active"))"
+deployment_type = "${DEPLOY_TYPE_OVERRIDE:-$([ "$VG_MODE" = "true" ] && echo "vg-active-active" || ([ "$FSX_MODE" = "true" ] && echo "zfs-active-active" || echo "active-active"))}"
 cluster_slot = $CLUSTER_SLOT
 instance_type_override = "$RESOLVED_MACHINE_TYPE"
 use_spot_instances = $USE_SPOT
@@ -944,7 +952,7 @@ subscription_id = "$AZURE_SUB_ID"
 cluster_name = "$DEPLOYMENT_NAME"
 location = "$LOCATION"
 performance_policy = "$POLICY"
-deployment_type = "$([ "$VG_MODE" = "true" ] && echo "vg-active-active" || ([ "$FSX_MODE" = "true" ] && echo "zfs-active-active" || echo "active-active"))"
+deployment_type = "${DEPLOY_TYPE_OVERRIDE:-$([ "$VG_MODE" = "true" ] && echo "vg-active-active" || ([ "$FSX_MODE" = "true" ] && echo "zfs-active-active" || echo "active-active"))}"
 cluster_slot = $CLUSTER_SLOT
 bucket_count = $BUCKET_COUNT
 use_spot_instances = $USE_SPOT
@@ -1451,9 +1459,11 @@ if [ "$SKIP_CLIENT" = "false" ]; then
                     | ($vips | split(",")) as $vl
                     | (.pools | to_entries | map(.value) | unique_by(.vip)) as $n
                     | { driver: $drv, ($drv): $vips,
-                        pools: {
-                          "data-pool-1": ($n | map(select(.vip==$vl[0]))[0]),
-                          "data-pool-2": ($n | map(select(.vip==$vl[1]))[0]) },
+                        pools: (
+                          {"data-pool-1": ($n | map(select(.vip==$vl[0]))[0])}
+                          + (if ($vl|length) > 1
+                             then {"data-pool-2": ($n | map(select(.vip==$vl[1]))[0])}
+                             else {} end) ),
                         zone_cluster_map: .zone_cluster_map }'
             else
                 echo "$raw" | jq --arg drv "$drv" '

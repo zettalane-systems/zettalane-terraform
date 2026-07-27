@@ -206,16 +206,8 @@ variable "vm_size_override" {
 # CLUSTER CONFIGURATION
 # ============================================================================
 
-variable "node_count" {
-  description = "Number of storage nodes in cluster (2-16)"
-  type        = number
-  default     = 2
-
-  validation {
-    condition     = var.node_count >= 2 && var.node_count <= 16
-    error_message = "Node count must be between 2 and 16 for MayaScale cluster"
-  }
-}
+# node_count is DERIVED from deployment_type (main.tf locals: *-single -> 1, else 2), NOT an
+# input -- topology is expressed via deployment_type (zfs-single / vg-single). Mirrors azure/mayanas.
 
 variable "replica_count" {
   description = "Number of data replicas (1=no replication, 2=mirrored, 3=triple)"
@@ -455,7 +447,7 @@ output "selected_performance_tier" {
     expected_bw_mbps    = local.selected_tier.target_bw_mbps
     deployment_mode     = local.selected_tier.deployment_mode
     cost_per_node       = local.selected_tier.cost_per_month
-    total_cost          = local.selected_tier.cost_per_month * var.node_count
+    total_cost          = local.selected_tier.cost_per_month * local.node_count
   }
 }
 
@@ -520,8 +512,8 @@ variable "deployment_type" {
   default     = "active-active"
 
   validation {
-    condition     = contains(["active-active", "zfs-active-active", "vg-active-active"], var.deployment_type)
-    error_message = "deployment_type must be 'active-active', 'zfs-active-active', or 'vg-active-active'"
+    condition     = contains(["active-active", "zfs-active-active", "vg-active-active", "zfs-single", "vg-single"], var.deployment_type)
+    error_message = "deployment_type must be one of: active-active, zfs-active-active, vg-active-active, zfs-single, vg-single"
   }
 }
 
