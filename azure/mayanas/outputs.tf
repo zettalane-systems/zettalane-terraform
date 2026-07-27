@@ -146,12 +146,12 @@ output "subnet_id" {
 
 output "subnet_name" {
   description = "Name of the subnet"
-  value       = var.subnet_name != "" ? var.subnet_name : azurerm_subnet.mayanas[0].name
+  value       = local.target_subnet_name
 }
 
 output "vnet_name" {
   description = "Name of the virtual network (so external modules — e.g. client-testing — can colocate)"
-  value       = var.vnet_name != "" ? var.vnet_name : azurerm_virtual_network.mayanas[0].name
+  value       = local.target_vnet_name
 }
 
 output "network_security_group_id" {
@@ -236,7 +236,7 @@ output "deployment_summary" {
 
     🌐 NETWORK CONFIGURATION
     ├─ Resource Group: ${local.resource_group_name}
-    ├─ VNet: ${length(azurerm_virtual_network.mayanas) > 0 ? azurerm_virtual_network.mayanas[0].name : var.vnet_name}
+    ├─ VNet: ${local.target_vnet_name}${local.use_existing_vnet ? " (shared)" : ""}
     ├─ VIP Mechanism: ${local.node_count > 1 ? var.vip_mechanism : "N/A"}
     ${local.node_count > 1 ? "├─ VIP: ${local.vip_address_final}" : ""}
     ${var.deployment_type == "active-active" ? "├─ VIP2: ${local.vip_address_2_final}" : ""}

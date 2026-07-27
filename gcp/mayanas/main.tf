@@ -67,41 +67,41 @@ data "external" "range_analysis" {
 locals {
   # Get current subnet information
   subnet_primary_cidr = data.google_compute_subnetwork.default.ip_cidr_range
-  
+
   # Parse range analysis data
-  ranges_string = data.external.range_analysis.result.vpc_ranges
-  all_ranges_raw = local.ranges_string != "" ? split(",", local.ranges_string) : []
+  ranges_string        = data.external.range_analysis.result.vpc_ranges
+  all_ranges_raw       = local.ranges_string != "" ? split(",", local.ranges_string) : []
   all_secondary_ranges = [for range in local.all_ranges_raw : range if range != ""]
-  
+
   # Parse region information for ranges
   ranges_with_regions_string = data.external.range_analysis.result.vpc_ranges_with_regions
-  ranges_with_regions_raw = local.ranges_with_regions_string != "" ? split(",", local.ranges_with_regions_string) : []
-  ranges_with_regions = [for item in local.ranges_with_regions_raw : item if item != ""]
-  
+  ranges_with_regions_raw    = local.ranges_with_regions_string != "" ? split(",", local.ranges_with_regions_string) : []
+  ranges_with_regions        = [for item in local.ranges_with_regions_raw : item if item != ""]
+
   # Check for existing mayanas-alias-range in target subnet
   existing_mayanas_range = data.external.range_analysis.result.existing_mayanas_range
-  
+
   # Determine if we can reuse existing mayanas-alias-range
   can_reuse_existing = (
-    local.existing_mayanas_range != "" && 
+    local.existing_mayanas_range != "" &&
     startswith(local.existing_mayanas_range, "10.100.")
   )
-  
+
   # Use region-based deterministic hash for VIP range selection (marketplace-package approach)
   # Simple deterministic hash using region name
-  region_hash = sum([for i, char in split("", var.region) : (i + 1) * 3])
-  default_range_index = local.region_hash % 256
+  region_hash            = sum([for i, char in split("", var.region) : (i + 1) * 3])
+  default_range_index    = local.region_hash % 256
   default_vip_cidr_range = "10.100.${local.default_range_index}.0/24"
-  
+
   # Create /24 candidate ranges starting from region-based hash to avoid common conflicts
   candidate_ranges = [
     for i in range(0, 256) : "10.100.${(local.default_range_index + i) % 256}.0/24"
   ]
-  
+
   # Find first /24 range that doesn't conflict with existing secondary ranges across VPC
-  available_ranges = [for range in local.candidate_ranges : range if !contains(local.all_secondary_ranges, range)]
+  available_ranges    = [for range in local.candidate_ranges : range if !contains(local.all_secondary_ranges, range)]
   auto_selected_range = length(local.available_ranges) > 0 ? local.available_ranges[0] : local.default_vip_cidr_range
-  
+
   # Use existing range if possible, manual override, or auto-selected range
   # Only assign VIP range for HA deployments (not single)
   vip_cidr_range = var.deployment_type == "single" ? "" : (
@@ -109,60 +109,60 @@ locals {
       var.vip_cidr_range != "" ? var.vip_cidr_range : local.auto_selected_range
     )
   )
-  
+
   # Extract IP range information for VIP calculation (only for HA deployments)
-  range_parts = local.vip_cidr_range != "" ? split("/", local.vip_cidr_range) : ["", ""]
+  range_parts   = local.vip_cidr_range != "" ? split("/", local.vip_cidr_range) : ["", ""]
   range_base_ip = local.vip_cidr_range != "" ? local.range_parts[0] : ""
   base_ip_parts = local.range_base_ip != "" ? split(".", local.range_base_ip) : ["", "", "", ""]
-  
+
   # Calculate dual VIP addresses within the /24 range.
   #
   # Two strategies:
-  #   pair_index >  0  →  deterministic slot assignment. Each pair owns 2
+  #   cluster_slot >  0  →  deterministic slot assignment. Each pair owns 2
   #                       contiguous IPs; pair N uses (2*N+1, 2*N+2). Guarantees
   #                       zero overlap when stacking multiple HA pairs in the
   #                       same /24 (Lustre join, multi-pair deployments).
-  #   pair_index == 0  →  random offset based on random_id.suffix.dec. Backward
+  #   cluster_slot == 0  →  random offset based on random_id.suffix.dec. Backward
   #                       compatible for single-pair deployments.
   full_random_value = random_id.suffix.dec
-  vip_offset1 = var.pair_index > 0 ? (var.pair_index * 2 + 1) : ((local.full_random_value % 254) + 1)
-  vip_offset2 = var.pair_index > 0 ? (var.pair_index * 2 + 2) : ((floor(local.full_random_value / 256) % 254) + 1)
+  vip_offset1       = var.cluster_slot > 0 ? (var.cluster_slot * 2 + 1) : ((local.full_random_value % 254) + 1)
+  vip_offset2       = var.cluster_slot > 0 ? (var.cluster_slot * 2 + 2) : ((floor(local.full_random_value / 256) % 254) + 1)
   vip_offset2_final = local.vip_offset1 == local.vip_offset2 ? ((local.vip_offset2 % 254) + 1) : local.vip_offset2
-  
+
   # VIP addresses based on deployment type
   # Active-active gets dual VIPs, active-passive gets one VIP, single gets no VIP
   vip_node1_address = var.deployment_type != "single" ? "${local.base_ip_parts[0]}.${local.base_ip_parts[1]}.${local.base_ip_parts[2]}.${local.vip_offset1}" : ""
   vip_node2_address = var.deployment_type == "active-active" ? "${local.base_ip_parts[0]}.${local.base_ip_parts[1]}.${local.base_ip_parts[2]}.${local.vip_offset2_final}" : ""
-  
+
   # Single alias IP range name for both nodes (active-active shares one range)
   alias_range_name = "mayanas-alias-range"
-  
+
   # Smart zone selection: use zones array or hash-based auto-select to spread load  
-  zone_count = length(data.google_compute_zones.available.names)
+  zone_count  = length(data.google_compute_zones.available.names)
   zone_offset = parseint(substr(random_id.suffix.hex, 2, 2), 16) % local.zone_count
-  
+
   node1_zone = length(var.zones) > 0 ? var.zones[0] : data.google_compute_zones.available.names[local.zone_offset]
   node2_zone = length(var.zones) > 1 ? var.zones[1] : (
     length(var.zones) == 1 ? var.zones[0] : (
       var.multi_zone ? data.google_compute_zones.available.names[(local.zone_offset + 1) % local.zone_count] : data.google_compute_zones.available.names[local.zone_offset]
     )
   )
-  
-  
+
+
   # Variable bucket management based on deployment type
   # Active-active gets resources per node, others share resources
-  total_bucket_count = var.deployment_type == "active-active" ? var.bucket_count * 2 : var.bucket_count
+  total_bucket_count        = var.deployment_type == "active-active" ? var.bucket_count * 2 : var.bucket_count
   total_metadata_disk_count = var.deployment_type == "active-active" ? var.metadata_disk_count * 2 : var.metadata_disk_count
-  
+
   # All bucket and disk names for startup script configuration
-  bucket_names = [for bucket in google_storage_bucket.mayanas_data : bucket.name]
+  bucket_names        = [for bucket in google_storage_bucket.mayanas_data : bucket.name]
   metadata_disk_names = var.multi_zone ? [for disk in google_compute_region_disk.mayanas_metadata_regional : disk.name] : [for disk in google_compute_disk.mayanas_metadata_zonal : disk.name]
-  
+
   # Trim cluster name to ensure service account ID stays within 30 char limit
   # Format: "{trimmed_cluster_name}-{6_char_hex}" must be ≤ 30 chars
   # So cluster name can be max 23 chars (30 - 1 dash - 6 hex chars)
   trimmed_cluster_name = length(var.cluster_name) > 23 ? substr(var.cluster_name, 0, 23) : var.cluster_name
-  
+
   # Consistent 6-character suffix for all resources (service account length limit)
   resource_suffix = substr(random_id.suffix.hex, 0, 6)
 
@@ -170,13 +170,13 @@ locals {
   # Works for all machine families: n2-standard-32, c4-standard-48, c4-standard-48-lssd, etc.
   # Regex captures digits after last dash before optional suffix: -(\\d+)(?:-.*)?$
   # TIER_1 requires 30+ vCPUs (applies to N2, C3, C3D, C4, N4, etc.)
-  machine_type_vcpus = tonumber(regex("-(\\d+)(?:-.*)?$", var.machine_type)[0])
+  machine_type_vcpus      = tonumber(regex("-(\\d+)(?:-.*)?$", var.machine_type)[0])
   enable_tier1_networking = local.machine_type_vcpus >= 30
 
   # Auto-select boot disk type based on machine type
   # N4 instances require Hyperdisk, C4/C4A also require Hyperdisk
   # All other instances support Persistent Disk types
-  is_n4_or_c4 = can(regex("^(n4|c4|c4a)-", var.machine_type))
+  is_n4_or_c4         = can(regex("^(n4|c4|c4a)-", var.machine_type))
   auto_boot_disk_type = local.is_n4_or_c4 ? "hyperdisk-balanced" : "pd-balanced"
 
   # Use auto-selected type if var.boot_disk_type is "auto", otherwise use specified type
@@ -192,7 +192,7 @@ locals {
   # Image path: use specific image if set, otherwise use image family for "latest"
   source_image_path = var.source_image != "" ? (
     "projects/${var.source_image_project}/global/images/${var.source_image}"
-  ) : (
+    ) : (
     "projects/${var.source_image_project}/global/images/family/${var.source_image_family}"
   )
 }
@@ -201,11 +201,11 @@ locals {
 output "vip_info" {
   description = "VIP range and calculated dual address information"
   value = {
-    existing_mayanas_range = local.existing_mayanas_range
-    existing_range_reused = local.can_reuse_existing
-    vip_range = local.vip_cidr_range
-    node1_calculated_vip = local.vip_node1_address
-    node2_calculated_vip = local.vip_node2_address
+    existing_mayanas_range  = local.existing_mayanas_range
+    existing_range_reused   = local.can_reuse_existing
+    vip_range               = local.vip_cidr_range
+    node1_calculated_vip    = local.vip_node1_address
+    node2_calculated_vip    = local.vip_node2_address
     vpc_ranges_with_regions = local.ranges_with_regions
   }
 }
@@ -214,7 +214,7 @@ output "vip_info" {
 # Validation check to ensure we found an available range or can reuse existing
 check "available_range_found" {
   assert {
-    condition = local.can_reuse_existing || var.vip_cidr_range != "" || local.auto_selected_range != "ERROR_NO_AVAILABLE_RANGE"
+    condition     = local.can_reuse_existing || var.vip_cidr_range != "" || local.auto_selected_range != "ERROR_NO_AVAILABLE_RANGE"
     error_message = <<-EOT
       ❌ NO AVAILABLE SECONDARY IP RANGE FOUND ❌
       
@@ -337,18 +337,18 @@ resource "google_project_iam_member" "mayanas_service_account_user" {
 # GCS buckets for shared data storage (scalable array)
 resource "google_storage_bucket" "mayanas_data" {
   count = local.total_bucket_count
-  
+
   name          = "${var.cluster_name}-mayanas-data-${count.index}-${local.resource_suffix}"
   location      = var.region
   storage_class = "STANDARD"
   force_destroy = var.force_destroy_buckets
-  
+
   uniform_bucket_level_access = true
-  
+
   versioning {
     enabled = false
   }
-  
+
   lifecycle_rule {
     condition {
       age = 30
@@ -357,11 +357,11 @@ resource "google_storage_bucket" "mayanas_data" {
       type = "Delete"
     }
   }
-  
+
   labels = {
-    environment = var.environment
-    cluster     = var.cluster_name
-    purpose     = "mayanas-data-storage"
+    environment  = var.environment
+    cluster      = var.cluster_name
+    purpose      = "mayanas-data-storage"
     bucket_index = tostring(count.index)
     # Node assignment for active-active: first half to node1, second half to node2
     node_assignment = count.index < var.bucket_count ? "node1" : "node2"
@@ -376,7 +376,7 @@ resource "google_storage_hmac_key" "mayanas_hmac" {
 # Create metadata disks (SSD) - Zonal for single-zone deployments  
 resource "google_compute_disk" "mayanas_metadata_zonal" {
   count = var.multi_zone ? 0 : local.total_metadata_disk_count
-  
+
   name = "${var.cluster_name}-mayanas-metadata-${count.index}-${local.resource_suffix}"
   type = local.metadata_disk_type
   zone = count.index < var.metadata_disk_count ? local.node1_zone : local.node2_zone
@@ -387,7 +387,7 @@ resource "google_compute_disk" "mayanas_metadata_zonal" {
     cluster     = var.cluster_name
     purpose     = "mayanas-metadata-storage"
     deployment  = "zonal"
-    disk_index = tostring(count.index)
+    disk_index  = tostring(count.index)
     # Node assignment for active-active: first half to node1, second half to node2
     node_assignment = count.index < var.metadata_disk_count ? "node1" : "node2"
   }
@@ -396,12 +396,12 @@ resource "google_compute_disk" "mayanas_metadata_zonal" {
 # Regional metadata disks (used when multi_zone = true)
 resource "google_compute_region_disk" "mayanas_metadata_regional" {
   count = var.multi_zone ? local.total_metadata_disk_count : 0
-  
+
   name   = "${var.cluster_name}-mayanas-metadata-${count.index}-${local.resource_suffix}"
   type   = var.metadata_disk_type
   region = var.region
   size   = var.metadata_disk_size_gb
-  
+
   replica_zones = [local.node1_zone, local.node2_zone]
 
   labels = {
@@ -409,7 +409,7 @@ resource "google_compute_region_disk" "mayanas_metadata_regional" {
     cluster     = var.cluster_name
     purpose     = "mayanas-metadata-storage"
     deployment  = "regional"
-    disk_index = tostring(count.index)
+    disk_index  = tostring(count.index)
     # Node assignment for active-active: first half to node1, second half to node2
     node_assignment = count.index < var.metadata_disk_count ? "node1" : "node2"
   }
@@ -514,7 +514,7 @@ data "template_file" "startup_script_node1" {
   template = file("${path.module}/startup.sh.tpl")
   vars = {
     deployment_type     = var.deployment_type
-    cluster_name         = var.cluster_name
+    cluster_name        = var.cluster_name
     node_role           = var.deployment_type == "active-active" ? "node1" : "primary"
     vip_address         = local.vip_node1_address
     vip_address_2       = local.vip_node2_address
@@ -533,15 +533,15 @@ data "template_file" "startup_script_node1" {
     primary_zone        = local.node1_zone
     secondary_zone      = local.node2_zone
     # Shares configuration (fsid added by cluster_setup2.sh per node)
-    shares              = jsonencode(var.shares)
-    random_suffix       = local.resource_suffix
-    mayanas_startup_wait = var.mayanas_startup_wait != null ? tostring(var.mayanas_startup_wait) : ""
-    bucket_count        = var.bucket_count
-    blocksize           = var.blocksize
-    subnet_cidr         = data.google_compute_subnetwork.default.ip_cidr_range
-    enable_lustre        = var.enable_lustre
-    lustre_fsname        = var.fsname
-    lustre_dom_threshold = var.dom_threshold
+    shares                = jsonencode(var.shares)
+    random_suffix         = local.resource_suffix
+    mayanas_startup_wait  = var.mayanas_startup_wait != null ? tostring(var.mayanas_startup_wait) : ""
+    bucket_count          = var.bucket_count
+    blocksize             = var.blocksize
+    subnet_cidr           = data.google_compute_subnetwork.default.ip_cidr_range
+    enable_lustre         = var.enable_lustre
+    lustre_fsname         = var.fsname
+    lustre_dom_threshold  = var.dom_threshold
     lustre_mdt_disk_names = var.enable_lustre && var.lustre_join_mgs_nid == "" ? join(" ", [for disk in google_compute_disk.lustre_mdt : disk.name]) : ""
     lustre_mdt_backend    = var.lustre_mdt_backend
     lustre_join_mgs_nid   = var.lustre_join_mgs_nid
@@ -592,7 +592,7 @@ resource "google_compute_instance" "mayanas_node1" {
 
   network_interface {
     subnetwork = data.google_compute_subnetwork.default.id
-    nic_type   = "GVNIC"  # Google Virtual NIC: better performance than VirtIO, required for TIER_1
+    nic_type   = "GVNIC" # Google Virtual NIC: better performance than VirtIO, required for TIER_1
 
     dynamic "access_config" {
       for_each = var.assign_public_ip ? [1] : []
@@ -619,12 +619,12 @@ resource "google_compute_instance" "mayanas_node1" {
   }
 
   metadata = {
-    ssh-keys = var.ssh_public_key != "" ? "mayanas:${var.ssh_public_key}" : ""
-    mayanas-cluster-name = var.cluster_name
-    mayanas-node-role = "node1"
-    mayanas-vip = local.vip_node1_address
-    mayanas-bucket = join(" ", local.bucket_names)
-    mayanas-peer-zone = local.node2_zone
+    ssh-keys                    = var.ssh_public_key != "" ? "mayanas:${var.ssh_public_key}" : ""
+    mayanas-cluster-name        = var.cluster_name
+    mayanas-node-role           = "node1"
+    mayanas-vip                 = local.vip_node1_address
+    mayanas-bucket              = join(" ", local.bucket_names)
+    mayanas-peer-zone           = local.node2_zone
     mayanas-cloud_user_password = random_password.mayanas_password.result
   }
 
@@ -633,8 +633,8 @@ resource "google_compute_instance" "mayanas_node1" {
   dynamic "scheduling" {
     for_each = var.use_spot_vms ? [1] : []
     content {
-      preemptible        = true
-      automatic_restart  = false
+      preemptible         = true
+      automatic_restart   = false
       on_host_maintenance = "TERMINATE"
     }
   }
@@ -679,7 +679,7 @@ resource "google_compute_instance" "mayanas_node2" {
 
   network_interface {
     subnetwork = data.google_compute_subnetwork.default.id
-    nic_type   = "GVNIC"  # Google Virtual NIC: better performance than VirtIO, required for TIER_1
+    nic_type   = "GVNIC" # Google Virtual NIC: better performance than VirtIO, required for TIER_1
 
     dynamic "access_config" {
       for_each = var.assign_public_ip ? [1] : []
@@ -706,12 +706,12 @@ resource "google_compute_instance" "mayanas_node2" {
   }
 
   metadata = {
-    ssh-keys = var.ssh_public_key != "" ? "mayanas:${var.ssh_public_key}" : ""
-    mayanas-cluster-name = var.cluster_name
-    mayanas-node-role = "node2"
-    mayanas-vip = local.vip_node2_address
-    mayanas-bucket = join(" ", local.bucket_names)
-    mayanas-peer-zone = local.node1_zone
+    ssh-keys                    = var.ssh_public_key != "" ? "mayanas:${var.ssh_public_key}" : ""
+    mayanas-cluster-name        = var.cluster_name
+    mayanas-node-role           = "node2"
+    mayanas-vip                 = local.vip_node2_address
+    mayanas-bucket              = join(" ", local.bucket_names)
+    mayanas-peer-zone           = local.node1_zone
     mayanas-cloud_user_password = random_password.mayanas_password.result
   }
 
@@ -720,8 +720,8 @@ resource "google_compute_instance" "mayanas_node2" {
   dynamic "scheduling" {
     for_each = var.use_spot_vms ? [1] : []
     content {
-      preemptible        = true
-      automatic_restart  = false
+      preemptible         = true
+      automatic_restart   = false
       on_host_maintenance = "TERMINATE"
     }
   }

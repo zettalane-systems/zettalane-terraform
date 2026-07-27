@@ -54,7 +54,7 @@ variable "cluster_name" {
   description = "Name of the MayaNAS deployment (optional - auto-generated if not provided)"
   type        = string
   default     = ""
-  
+
   validation {
     condition     = var.cluster_name == "" || can(regex("^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$", var.cluster_name))
     error_message = "Cluster name must be 3-63 characters, start and end with alphanumeric, and contain only lowercase letters, numbers, and hyphens."
@@ -65,7 +65,7 @@ variable "deployment_type" {
   description = "Type of MayaNAS deployment"
   type        = string
   default     = "active-passive"
-  
+
   validation {
     condition     = contains(["single", "active-passive", "active-active"], var.deployment_type)
     error_message = "Deployment type must be one of: single, active-passive, active-active."
@@ -76,7 +76,7 @@ variable "environment" {
   description = "Environment name (dev, staging, prod, etc.)"
   type        = string
   default     = "prod"
-  
+
   validation {
     condition     = contains(["dev", "staging", "prod", "test"], var.environment)
     error_message = "Environment must be one of: dev, staging, prod, test."
@@ -88,7 +88,7 @@ variable "vip_mechanism" {
   description = "VIP mechanism: load-balancer or custom-route"
   type        = string
   default     = "custom-route"
-  
+
   validation {
     condition     = contains(["load-balancer", "custom-route"], var.vip_mechanism)
     error_message = "VIP mechanism must be load-balancer or custom-route."
@@ -132,6 +132,16 @@ variable "subnet_address_prefixes" {
   default     = ["10.0.1.0/24"]
 }
 
+variable "cluster_slot" {
+  description = "Index of this HA pair within a shared VNet, used to deterministically partition VIPs (matches GCP/AWS/mayascale multi-pair). 0 = first/standalone (random VIP). 1,2,... = additional clusters sharing the VNet, each claiming 2 contiguous VIPs (.slot*2+1 / .slot*2+2). Range: 0-126."
+  type        = number
+  default     = 0
+  validation {
+    condition     = var.cluster_slot >= 0 && var.cluster_slot <= 126
+    error_message = "cluster_slot must be between 0 and 126 (2 VIP slots per cluster)."
+  }
+}
+
 variable "ssh_cidr_blocks" {
   description = "CIDR blocks for SSH access"
   type        = list(string)
@@ -142,14 +152,14 @@ variable "ssh_cidr_blocks" {
 variable "vm_size" {
   description = "Azure VM size"
   type        = string
-  default     = "Standard_D4s_v3"  # 4 vCPU, 16GB RAM, Accelerated Networking
+  default     = "Standard_D4s_v3" # 4 vCPU, 16GB RAM, Accelerated Networking
 }
 
 variable "os_disk_type" {
   description = "OS disk type"
   type        = string
   default     = "Premium_LRS"
-  
+
   validation {
     condition     = contains(["Standard_LRS", "Premium_LRS", "StandardSSD_LRS"], var.os_disk_type)
     error_message = "OS disk type must be Standard_LRS, Premium_LRS, or StandardSSD_LRS."
@@ -160,7 +170,7 @@ variable "os_disk_size_gb" {
   description = "OS disk size in GB"
   type        = number
   default     = 30
-  
+
   validation {
     condition     = var.os_disk_size_gb >= 30 && var.os_disk_size_gb <= 2048
     error_message = "OS disk size must be between 30 and 2048 GB."
@@ -191,7 +201,7 @@ variable "metadata_disk_count" {
   description = "Number of metadata disks per deployment"
   type        = number
   default     = 1
-  
+
   validation {
     condition     = var.metadata_disk_count >= 1 && var.metadata_disk_count <= 4
     error_message = "Metadata disk count must be between 1 and 4."
@@ -201,8 +211,8 @@ variable "metadata_disk_count" {
 variable "metadata_disk_type" {
   description = "Metadata disk type (auto-selected: LRS for single node, ZRS for multi-zone HA)"
   type        = string
-  default     = ""  # Auto-selected based on deployment type
-  
+  default     = "" # Auto-selected based on deployment type
+
   validation {
     condition     = var.metadata_disk_type == "" || contains(["Premium_LRS", "Premium_ZRS", "StandardSSD_LRS", "StandardSSD_ZRS", "UltraSSD_LRS"], var.metadata_disk_type)
     error_message = "Metadata disk type must be empty (auto-select) or one of: Premium_LRS, Premium_ZRS, StandardSSD_LRS, StandardSSD_ZRS, UltraSSD_LRS."
@@ -213,11 +223,39 @@ variable "metadata_disk_size_gb" {
   description = "Metadata disk size in GB"
   type        = number
   default     = 100
-  
+
   validation {
     condition     = var.metadata_disk_size_gb >= 32 && var.metadata_disk_size_gb <= 32767
     error_message = "Metadata disk size must be between 32 and 32767 GB."
   }
+}
+
+variable "lustre_mdt_disk_size_gb" {
+  description = "Lustre MDT (ldiskfs) disk size in GB. Determines max file count (inode table) and mkfs time; sweep this to benchmark. Premium_LRS bills up to the enclosing tier (P4=32/P6=64/P10=128/...). Above the on-node MAYANAS_MDT_LAZY_ITABLE_GB threshold (default 32), mkfs uses lazy_itable_init for a fast format."
+  type        = number
+  default     = 50
+
+  validation {
+    condition     = var.lustre_mdt_disk_size_gb >= 4 && var.lustre_mdt_disk_size_gb <= 32767
+    error_message = "Lustre MDT disk size must be between 4 and 32767 GB (Premium_LRS min is P1=4GB)."
+  }
+}
+
+variable "lustre_mdt_disk_type" {
+  description = "Lustre MDT managed-disk SKU. Premium_LRS (tiered IOPS) or PremiumV2_LRS (granular sizing + independent IOPS/throughput, better for size sweeps). StandardSSD_LRS for cheap non-perf tests."
+  type        = string
+  default     = "Premium_LRS"
+
+  validation {
+    condition     = contains(["Premium_LRS", "PremiumV2_LRS", "StandardSSD_LRS", "Standard_LRS"], var.lustre_mdt_disk_type)
+    error_message = "lustre_mdt_disk_type must be Premium_LRS, PremiumV2_LRS, StandardSSD_LRS, or Standard_LRS."
+  }
+}
+
+variable "lustre_mdt_lazyinit" {
+  description = "Format the ldiskfs MDT with lazy_itable_init=1 (mkfs returns in seconds; the inode table is zeroed by the background ldiskfs lazyinit thread after mount). Default true — needed because eager init on a throughput-capped Premium disk (~337s at 50GB/P6) trips the create RPC timeout. Set false for Lustre's eager default (predictable MDT perf, no post-mount background I/O)."
+  type        = bool
+  default     = true
 }
 
 # Ultra Disk Configuration (Advanced)
@@ -231,7 +269,7 @@ variable "ultra_disk_iops" {
   description = "Ultra Disk IOPS (when use_ultra_disks is true)"
   type        = number
   default     = 40000
-  
+
   validation {
     condition     = var.ultra_disk_iops >= 300 && var.ultra_disk_iops <= 400000
     error_message = "Ultra Disk IOPS must be between 300 and 400000."
@@ -242,7 +280,7 @@ variable "ultra_disk_throughput_mbps" {
   description = "Ultra Disk throughput in MB/s (when use_ultra_disks is true)"
   type        = number
   default     = 2000
-  
+
   validation {
     condition     = var.ultra_disk_throughput_mbps >= 1 && var.ultra_disk_throughput_mbps <= 10000
     error_message = "Ultra Disk throughput must be between 1 and 10000 MB/s."
@@ -253,8 +291,8 @@ variable "ultra_disk_throughput_mbps" {
 variable "storage_account_type" {
   description = "Storage account type for object storage"
   type        = string
-  default     = "Standard_ZRS"  # Cross-zone redundant
-  
+  default     = "Standard_ZRS" # Cross-zone redundant
+
   validation {
     condition     = contains(["Standard_LRS", "Standard_ZRS", "Standard_GRS", "Premium_LRS", "Premium_ZRS"], var.storage_account_type)
     error_message = "Storage account type must be Standard_LRS, Standard_ZRS, Standard_GRS, Premium_LRS, or Premium_ZRS."
@@ -312,7 +350,7 @@ variable "performance_tier" {
   description = "Performance tier: standard, high-performance, or ultra"
   type        = string
   default     = "standard"
-  
+
   validation {
     condition     = contains(["standard", "high-performance", "ultra"], var.performance_tier)
     error_message = "Performance tier must be standard, high-performance, or ultra."
@@ -347,12 +385,12 @@ variable "tags" {
 variable "mayanas_config" {
   description = "MayaNAS-specific configuration options"
   type = object({
-    enable_debug_logs    = optional(bool, false)
+    enable_debug_logs     = optional(bool, false)
     custom_startup_script = optional(string, "")
     additional_packages   = optional(list(string), [])
   })
   default = {
-    enable_debug_logs    = false
+    enable_debug_logs     = false
     custom_startup_script = ""
     additional_packages   = []
   }
@@ -364,10 +402,10 @@ variable "shares" {
   type = list(object({
     name         = string
     recordsize   = string
-    export       = string  # "nfs", "nfs3", "smb", or "multi"
+    export       = string # "nfs", "nfs3", "smb", or "multi"
     nfs_options  = optional(string, "")
     smb_options  = optional(string, "")
-    smb_profile  = optional(string, "")  # "posix", "windows", or "multiprotocol"
+    smb_profile  = optional(string, "") # "posix", "windows", or "multiprotocol"
     smb_user     = optional(string, "")
     smb_password = optional(string, "")
     smb_uid      = optional(string, "")

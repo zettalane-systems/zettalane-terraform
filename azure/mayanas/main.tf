@@ -85,7 +85,7 @@ resource "null_resource" "ssh_key_validation" {
 data "external" "resource_group_exists" {
   count = var.resource_group_name != "" ? 1 : 0
   program = ["bash", "-c", <<-EOF
-    if az group show --name "${var.resource_group_name}" >/dev/null 2>&1; then
+    if az group show --name "${var.resource_group_name}" --subscription "${var.subscription_id}" >/dev/null 2>&1; then
       echo '{"exists":"true"}'
     else
       echo '{"exists":"false"}'
@@ -97,7 +97,7 @@ data "external" "resource_group_exists" {
 locals {
   # Determine if we should use existing resource group
   use_existing_rg = var.resource_group_name != "" && length(data.external.resource_group_exists) > 0 && data.external.resource_group_exists[0].result.exists == "true"
-  create_new_rg = var.resource_group_name == "" || (length(data.external.resource_group_exists) > 0 && data.external.resource_group_exists[0].result.exists == "false")
+  create_new_rg   = var.resource_group_name == "" || (length(data.external.resource_group_exists) > 0 && data.external.resource_group_exists[0].result.exists == "false")
 }
 
 # Use existing resource group if it exists
@@ -118,42 +118,81 @@ resource "azurerm_resource_group" "mayanas" {
   }
 }
 
-# Auto-detect or create virtual network
-# Commented out auto-detect - requires specific vnet name
-# data "azurerm_virtual_network" "existing" {
-#   count               = var.vnet_name == "" ? 1 : 0
-#   name                = "default-vnet"  # Would need actual vnet name
-#   resource_group_name = local.resource_group_name
-# }
+# ----------------------------------------------------------------------------
+# Shared "fabric" network: every cluster joins ONE common VNet (default
+# "mayanas-vnet") and subnet ("mayanas-subnet"), created by the first cluster and
+# reused by the rest (use-if-exists, like the resource group / route table) -- so
+# clients + clusters share one network (GCP-shared-VPC behaviour, no per-deploy
+# isolated vnet). cluster_slot then partitions the VIPs so clusters never collide.
+# Set vnet_name / subnet_name to join a specific pre-existing (e.g. customer) net.
+# ----------------------------------------------------------------------------
+locals {
+  target_vnet_name   = var.vnet_name != "" ? var.vnet_name : "mayanas-vnet"
+  target_subnet_name = var.subnet_name != "" ? var.subnet_name : "mayanas-subnet"
+}
 
+data "external" "vnet_exists" {
+  count = var.resource_group_name != "" ? 1 : 0
+  program = ["bash", "-c", <<-EOF
+    if [ "$(az network vnet show --subscription "${var.subscription_id}" --resource-group "${var.resource_group_name}" --name "${local.target_vnet_name}" --query name -o tsv 2>/dev/null)" = "${local.target_vnet_name}" ]; then
+      echo '{"exists":"true"}'
+    else
+      echo '{"exists":"false"}'
+    fi
+  EOF
+  ]
+}
+
+data "external" "subnet_exists" {
+  count = var.resource_group_name != "" ? 1 : 0
+  program = ["bash", "-c", <<-EOF
+    if [ "$(az network vnet subnet show --subscription "${var.subscription_id}" --resource-group "${var.resource_group_name}" --vnet-name "${local.target_vnet_name}" --name "${local.target_subnet_name}" --query name -o tsv 2>/dev/null)" = "${local.target_subnet_name}" ]; then
+      echo '{"exists":"true"}'
+    else
+      echo '{"exists":"false"}'
+    fi
+  EOF
+  ]
+}
+
+locals {
+  use_existing_vnet   = try(data.external.vnet_exists[0].result.exists, "false") == "true"
+  create_new_vnet     = !local.use_existing_vnet
+  use_existing_subnet = try(data.external.subnet_exists[0].result.exists, "false") == "true"
+  create_new_subnet   = !local.use_existing_subnet
+}
+
+# Reuse the shared VNet if it already exists (an earlier cluster or the customer created it)
 data "azurerm_virtual_network" "selected" {
-  count               = var.vnet_name != "" ? 1 : 0
-  name                = var.vnet_name
+  count               = local.use_existing_vnet ? 1 : 0
+  name                = local.target_vnet_name
   resource_group_name = local.resource_group_name
 }
 
+# Create the shared VNet only if it does not exist yet (first cluster)
 resource "azurerm_virtual_network" "mayanas" {
-  count               = var.vnet_name == "" ? 1 : 0  # Always create if no vnet specified
-  name                = "vnet-mayanas-${random_id.deployment.hex}"
+  count               = local.create_new_vnet ? 1 : 0
+  name                = local.target_vnet_name
   address_space       = var.vnet_address_space
   location            = local.resource_group.location
   resource_group_name = local.resource_group_name
   tags                = var.tags
 }
 
-# Auto-detect or create subnet
+# Reuse the shared subnet if it exists
 data "azurerm_subnet" "selected" {
-  count                = var.subnet_name != "" ? 1 : 0
-  name                 = var.subnet_name
-  virtual_network_name = local.virtual_network_name
+  count                = local.use_existing_subnet ? 1 : 0
+  name                 = local.target_subnet_name
+  virtual_network_name = local.target_vnet_name
   resource_group_name  = local.resource_group_name
 }
 
+# Create the shared subnet only if it does not exist yet (first cluster)
 resource "azurerm_subnet" "mayanas" {
-  count                = var.subnet_name == "" ? 1 : 0
-  name                 = "subnet-mayanas-${random_id.deployment.hex}"
+  count                = local.create_new_subnet ? 1 : 0
+  name                 = local.target_subnet_name
   resource_group_name  = local.resource_group_name
-  virtual_network_name = local.virtual_network_name
+  virtual_network_name = local.use_existing_vnet ? data.azurerm_virtual_network.selected[0].name : azurerm_virtual_network.mayanas[0].name
   address_prefixes     = var.subnet_address_prefixes
 }
 
@@ -165,59 +204,64 @@ locals {
 
 locals {
   # Resource group selection: use existing data source if found, otherwise use created resource
-  resource_group = local.use_existing_rg ? data.azurerm_resource_group.existing[0] : azurerm_resource_group.mayanas[0]
+  resource_group      = local.use_existing_rg ? data.azurerm_resource_group.existing[0] : azurerm_resource_group.mayanas[0]
   resource_group_name = local.resource_group.name
 
-  # Network configuration
-  virtual_network_name = var.vnet_name != "" ? var.vnet_name : azurerm_virtual_network.mayanas[0].name
-  
-  subnet_id = var.subnet_name != "" ? data.azurerm_subnet.selected[0].id : azurerm_subnet.mayanas[0].id
+  # Network configuration (shared fabric: reuse-if-exists)
+  virtual_network_name = local.use_existing_vnet ? data.azurerm_virtual_network.selected[0].name : azurerm_virtual_network.mayanas[0].name
+
+  subnet_id = local.use_existing_subnet ? data.azurerm_subnet.selected[0].id : azurerm_subnet.mayanas[0].id
 
   # Zone configuration with improved auto-selection logic
   # Priority: 1) User-specified zones 2) Auto-select if multi_zone=true 3) No zones (availability set)
   availability_zones = length(var.availability_zones) > 0 ? var.availability_zones : (
     var.multi_zone ? (
       # Auto-select 2 zones for regions that support availability zones
-      contains(["eastus", "eastus2", "centralus", "westeurope", "northeurope", "southeastasia", "westus2", "uksouth", "japaneast", "australiaeast"], local.resource_group.location) ? 
+      contains(["eastus", "eastus2", "centralus", "westeurope", "northeurope", "southeastasia", "westus2", "uksouth", "japaneast", "australiaeast"], local.resource_group.location) ?
       slice(local.default_zones, 0, 2) : []
     ) : []
   )
-  
+
   node1_zone = length(local.availability_zones) > 0 ? local.availability_zones[0] : null
   node2_zone = length(local.availability_zones) > 1 ? local.availability_zones[1] : local.node1_zone
 
   # Deployment configuration
   cluster_name = var.cluster_name != "" ? var.cluster_name : "mayanas-${random_id.deployment.hex}"
-  
+
   # Instance count based on deployment type
   node_count = var.deployment_type == "single" ? 1 : 2
-  
+
   # VIP configuration with auto-generation
   # For custom-route: VIPs outside subnet range to avoid routing conflicts
   # For load-balancer: VIPs within subnet range for Azure LB frontend
-  subnet_cidr = azurerm_subnet.mayanas[0].address_prefixes[0]
+  subnet_cidr  = local.use_existing_subnet ? data.azurerm_subnet.selected[0].address_prefixes[0] : azurerm_subnet.mayanas[0].address_prefixes[0]
   subnet_parts = split(".", split("/", local.subnet_cidr)[0])
-  
+
   # Generate VIP outside subnet by using different third octet
   # E.g., for 10.0.1.0/24 -> 10.0.100.x, for 192.168.1.0/24 -> 192.168.100.x
   vip_network_base = format("%s.%s.100", local.subnet_parts[0], local.subnet_parts[1])
-  
+
+  # cluster_slot > 0: deterministic 2-contiguous-slot VIPs per cluster (matches
+  # GCP/AWS/mayascale multi-pair) so clusters sharing the VNet never collide; 0 = random (standalone)
+  vip_offset1 = var.cluster_slot > 0 ? (var.cluster_slot * 2 + 1) : (100 + (local.resource_id % 155))
+  vip_offset2 = var.cluster_slot > 0 ? (var.cluster_slot * 2 + 2) : (101 + (local.resource_id % 154))
+
   vip_address_final = var.vip_address != "" ? var.vip_address : (
-    var.vip_mechanism == "custom-route" ? 
-      format("%s.%d", local.vip_network_base, 100 + (local.resource_id % 155)) :
-      cidrhost(local.subnet_cidr, 100)
+    var.vip_mechanism == "custom-route" ?
+    format("%s.%d", local.vip_network_base, local.vip_offset1) :
+    cidrhost(local.subnet_cidr, 100)
   )
   vip_address_2_final = var.deployment_type == "active-active" && var.vip_address_2 != "" ? var.vip_address_2 : (
     var.deployment_type == "active-active" ? (
       var.vip_mechanism == "custom-route" ?
-        format("%s.%d", local.vip_network_base, 101 + (local.resource_id % 154)) :
-        cidrhost(local.subnet_cidr, 101)
+      format("%s.%d", local.vip_network_base, local.vip_offset2) :
+      cidrhost(local.subnet_cidr, 101)
     ) : ""
   )
 
   # Metadata disk configuration with auto-sizing
   metadata_disk_size_final = var.metadata_disk_size_gb
-  
+
   # Auto-select disk type based on deployment pattern (following GCP pattern)
   # Single zone: LRS (local redundancy, optimal performance)
   # Multi-zone HA: ZRS (cross-zone shared storage for failover)
@@ -232,14 +276,14 @@ locals {
 
   # Storage account name (DNS compliant)
   storage_account_name = "st${replace(lower(local.cluster_name), "-", "")}${substr(random_id.deployment.hex, 0, 6)}"
-  
+
   # Resource IDs for compatibility with AWS template
-  resource_id = random_integer.resource_id.result
+  resource_id      = random_integer.resource_id.result
   peer_resource_id = random_integer.peer_resource_id.result
-  
+
   # SSH key selection (Azure SSH Public Key, Key Vault, or direct)
   ssh_public_key_final = var.ssh_key_resource_id != "" ? data.azurerm_ssh_public_key.ssh_key[0].public_key : (var.ssh_key_vault_id != "" ? data.azurerm_key_vault_secret.ssh_key[0].value : var.ssh_public_key)
-  
+
   # Container count calculation (matching GCP/AWS pattern)
   total_bucket_count = var.deployment_type == "active-active" ? var.bucket_count * 2 : var.bucket_count
 
@@ -255,43 +299,44 @@ locals {
 # Startup script template (only primary node needs startup script, matching AWS/GCP pattern)
 locals {
   startup_script_primary = templatefile("${path.module}/startup.sh.tpl", {
-    cluster_name                = local.cluster_name
-    deployment_type            = var.deployment_type
-    node_role                  = var.deployment_type == "active-active" ? "node1" : "primary"
-    vip_address                = local.vip_address_final
-    vip_address_2              = local.vip_address_2_final
-    bucket_count               = var.bucket_count
-    node_count                 = local.node_count
-    peer_zone                  = local.node_count > 1 ? (local.node2_zone != null ? local.node2_zone : "") : ""
-    metadata_disk_count        = var.metadata_disk_count
-    storage_size_gb            = var.storage_size_gb
-    resource_id                = local.resource_id
-    peer_resource_id           = local.peer_resource_id
-    availability_zone          = local.node1_zone != null ? local.node1_zone : ""
-    azure_region               = local.resource_group.location
-    resource_group_name        = local.resource_group_name
-    secondary_resource_group_name = local.resource_group_name  # Same resource group in Azure
-    secondary_private_ip       = local.node_count > 1 ? azurerm_network_interface.mayanas[1].ip_configuration[0].private_ip_address : ""
-    secondary_instance_name    = local.node_count > 1 ? (var.deployment_type == "active-active" ? "${local.cluster_name}-mayanas-node2-${random_id.deployment.hex}" : "${local.cluster_name}-secondary-${random_id.deployment.hex}") : ""
-    bucket_names               = join(" ", azurerm_storage_container.mayanas[*].name)
-    metadata_disk_names        = join(" ", [for i, disk in azurerm_managed_disk.metadata : disk.name if i % local.node_count == 0])
-    s3_access_key              = azurerm_storage_account.mayanas.name  # Storage account name (key retrieved at runtime via managed identity)
-    ssh_public_key             = local.ssh_public_key_final
+    cluster_name                  = local.cluster_name
+    deployment_type               = var.deployment_type
+    node_role                     = var.deployment_type == "active-active" ? "node1" : "primary"
+    vip_address                   = local.vip_address_final
+    vip_address_2                 = local.vip_address_2_final
+    bucket_count                  = var.bucket_count
+    node_count                    = local.node_count
+    peer_zone                     = local.node_count > 1 ? (local.node2_zone != null ? local.node2_zone : "") : ""
+    metadata_disk_count           = var.metadata_disk_count
+    storage_size_gb               = var.storage_size_gb
+    resource_id                   = local.resource_id
+    peer_resource_id              = local.peer_resource_id
+    availability_zone             = local.node1_zone != null ? local.node1_zone : ""
+    azure_region                  = local.resource_group.location
+    resource_group_name           = local.resource_group_name
+    secondary_resource_group_name = local.resource_group_name # Same resource group in Azure
+    secondary_private_ip          = local.node_count > 1 ? azurerm_network_interface.mayanas[1].ip_configuration[0].private_ip_address : ""
+    secondary_instance_name       = local.node_count > 1 ? (var.deployment_type == "active-active" ? "${local.cluster_name}-mayanas-node2-${random_id.deployment.hex}" : "${local.cluster_name}-secondary-${random_id.deployment.hex}") : ""
+    bucket_names                  = join(" ", azurerm_storage_container.mayanas[*].name)
+    metadata_disk_names           = join(" ", [for i, disk in azurerm_managed_disk.metadata : disk.name if i % local.node_count == 0])
+    s3_access_key                 = azurerm_storage_account.mayanas.name # Storage account name (key retrieved at runtime via managed identity)
+    ssh_public_key                = local.ssh_public_key_final
     # For active-active: split buckets/disks between nodes (first half = node1, second half = node2)
     # For other deployments: all buckets/disks for node1, empty for node2
-    bucket_node1               = var.deployment_type == "active-active" ? join(" ", slice(azurerm_storage_container.mayanas[*].name, 0, var.bucket_count)) : join(" ", azurerm_storage_container.mayanas[*].name)
-    bucket_node2               = var.deployment_type == "active-active" ? join(" ", slice(azurerm_storage_container.mayanas[*].name, var.bucket_count, local.total_bucket_count)) : ""
-    metadata_disk_node1        = var.deployment_type == "active-active" ? azurerm_managed_disk.metadata[0].name : ""
-    metadata_disk_node2        = var.deployment_type == "active-active" && local.node_count > 1 ? azurerm_managed_disk.metadata[1].name : ""
-    metadata_disk_size_gb      = var.metadata_disk_size_gb
-    project_id                 = local.resource_group_name  # Azure equivalent: resource group name
-    subnet_cidr = azurerm_subnet.mayanas[0].address_prefixes[0]
-    shares                     = jsonencode(var.shares)
-    enable_lustre              = var.enable_lustre
-    lustre_fsname              = var.fsname
-    lustre_dom_threshold       = var.dom_threshold
-    lustre_mdt_disk_name       = var.enable_lustre ? azurerm_managed_disk.lustre_mdt[0].name : ""
-    mayanas_startup_wait       = var.mayanas_startup_wait != null ? tostring(var.mayanas_startup_wait) : ""
+    bucket_node1          = var.deployment_type == "active-active" ? join(" ", slice(azurerm_storage_container.mayanas[*].name, 0, var.bucket_count)) : join(" ", azurerm_storage_container.mayanas[*].name)
+    bucket_node2          = var.deployment_type == "active-active" ? join(" ", slice(azurerm_storage_container.mayanas[*].name, var.bucket_count, local.total_bucket_count)) : ""
+    metadata_disk_node1   = var.deployment_type == "active-active" ? azurerm_managed_disk.metadata[0].name : ""
+    metadata_disk_node2   = var.deployment_type == "active-active" && local.node_count > 1 ? azurerm_managed_disk.metadata[1].name : ""
+    metadata_disk_size_gb = var.metadata_disk_size_gb
+    project_id            = local.resource_group_name # Azure equivalent: resource group name
+    subnet_cidr           = local.subnet_cidr
+    shares                = jsonencode(var.shares)
+    enable_lustre         = var.enable_lustre
+    lustre_fsname         = var.fsname
+    lustre_dom_threshold  = var.dom_threshold
+    lustre_mdt_disk_name  = var.enable_lustre ? azurerm_managed_disk.lustre_mdt[0].name : ""
+    lustre_mdt_lazyinit   = var.lustre_mdt_lazyinit ? "1" : "0"
+    mayanas_startup_wait  = var.mayanas_startup_wait != null ? tostring(var.mayanas_startup_wait) : ""
   })
 }
 
@@ -369,9 +414,9 @@ resource "azurerm_route_table" "mayanas" {
   count                         = var.vip_mechanism == "custom-route" && local.node_count > 1 ? 1 : 0
   name                          = "mayanas-route-table"
   location                      = local.resource_group.location
-  resource_group_name          = local.resource_group_name
+  resource_group_name           = local.resource_group_name
   bgp_route_propagation_enabled = true
-  tags                         = local.common_tags
+  tags                          = local.common_tags
 }
 
 # Associate route table with subnet
@@ -388,8 +433,8 @@ resource "azurerm_public_ip" "lb" {
   location            = local.resource_group.location
   resource_group_name = local.resource_group_name
   allocation_method   = "Static"
-  sku                = "Standard"
-  tags               = local.common_tags
+  sku                 = "Standard"
+  tags                = local.common_tags
 }
 
 resource "azurerm_lb" "mayanas" {
@@ -397,14 +442,14 @@ resource "azurerm_lb" "mayanas" {
   name                = "lb-mayanas-${local.cluster_name}"
   location            = local.resource_group.location
   resource_group_name = local.resource_group_name
-  sku                = "Standard"
-  tags               = local.common_tags
+  sku                 = "Standard"
+  tags                = local.common_tags
 
   frontend_ip_configuration {
     name                          = "internal"
     subnet_id                     = local.subnet_id
     private_ip_address_allocation = "Static"
-    private_ip_address           = local.vip_address_final
+    private_ip_address            = local.vip_address_final
   }
 
   frontend_ip_configuration {
@@ -422,11 +467,11 @@ resource "azurerm_lb_backend_address_pool" "mayanas" {
 
 # Health Probe on port 61000 (expected by AzureLB.resource)
 resource "azurerm_lb_probe" "mayanas" {
-  count           = var.vip_mechanism == "load-balancer" && local.node_count > 1 ? 1 : 0
-  loadbalancer_id = azurerm_lb.mayanas[0].id
-  name            = "mayanas-health-probe"
-  port            = 61000
-  protocol        = "Tcp"
+  count               = var.vip_mechanism == "load-balancer" && local.node_count > 1 ? 1 : 0
+  loadbalancer_id     = azurerm_lb.mayanas[0].id
+  name                = "mayanas-health-probe"
+  port                = 61000
+  protocol            = "Tcp"
   interval_in_seconds = 15
   number_of_probes    = 2
 }
@@ -455,14 +500,14 @@ resource "azurerm_managed_disk" "metadata" {
   storage_account_type = local.metadata_disk_type_final
   create_option        = "Empty"
   disk_size_gb         = local.metadata_disk_size_final
-  
+
   # Zone setting: null for ZRS (cross-zone), specific zone for LRS (single-zone)
   zone = local.metadata_disk_type_final == "Premium_ZRS" || local.metadata_disk_type_final == "StandardSSD_ZRS" ? null : (count.index % local.node_count == 0 ? local.node1_zone : local.node2_zone)
-  
+
   # Ultra Disk performance settings
   disk_iops_read_write = var.use_ultra_disks ? var.ultra_disk_iops : null
   disk_mbps_read_write = var.use_ultra_disks ? var.ultra_disk_throughput_mbps : null
-  
+
   tags = merge(local.common_tags, {
     Purpose = "metadata"
     Node    = "node${count.index % local.node_count + 1}"
@@ -477,9 +522,9 @@ resource "azurerm_managed_disk" "lustre_mdt" {
   name                 = "disk-lustre-mdt-${local.cluster_name}-${random_id.deployment.hex}"
   location             = local.resource_group.location
   resource_group_name  = local.resource_group_name
-  storage_account_type = "Premium_LRS"
+  storage_account_type = var.lustre_mdt_disk_type
   create_option        = "Empty"
-  disk_size_gb         = 50
+  disk_size_gb         = var.lustre_mdt_disk_size_gb
   zone                 = local.node1_zone
 
   tags = merge(local.common_tags, {
@@ -509,20 +554,20 @@ resource "azurerm_storage_account" "mayanas" {
   location                 = local.resource_group.location
   account_tier             = split("_", local.storage_account_type_final)[0]
   account_replication_type = split("_", local.storage_account_type_final)[1]
-  account_kind            = "StorageV2"
-  
+  account_kind             = "StorageV2"
+
   # Advanced features
-  https_traffic_only_enabled     = true
-  min_tls_version               = "TLS1_2"
+  https_traffic_only_enabled      = true
+  min_tls_version                 = "TLS1_2"
   allow_nested_items_to_be_public = false
-  
+
   tags = local.common_tags
 }
 
 # Create blob containers based on bucket_count (like AWS S3 buckets / GCP buckets)
 # For active-active: bucket_count * 2, otherwise bucket_count
 resource "azurerm_storage_container" "mayanas" {
-  count = local.total_bucket_count
+  count                 = local.total_bucket_count
   name                  = "${local.cluster_name}-data-${count.index}-${random_id.deployment.hex}"
   storage_account_id    = azurerm_storage_account.mayanas.id
   container_access_type = "private"
@@ -535,17 +580,17 @@ resource "azurerm_public_ip" "mayanas" {
   location            = local.resource_group.location
   resource_group_name = local.resource_group_name
   allocation_method   = "Static"
-  tags               = local.common_tags
+  tags                = local.common_tags
 }
 
 # Network Interfaces with Accelerated Networking
 resource "azurerm_network_interface" "mayanas" {
-  count                         = local.node_count
-  name                          = "nic-mayanas-node${count.index + 1}-${local.cluster_name}"
-  location                      = local.resource_group.location
-  resource_group_name          = local.resource_group_name
+  count                          = local.node_count
+  name                           = "nic-mayanas-node${count.index + 1}-${local.cluster_name}"
+  location                       = local.resource_group.location
+  resource_group_name            = local.resource_group_name
   accelerated_networking_enabled = var.enable_accelerated_networking
-  tags                         = local.common_tags
+  tags                           = local.common_tags
 
   ip_configuration {
     name                          = "internal"
@@ -573,7 +618,7 @@ resource "azurerm_network_interface_backend_address_pool_association" "mayanas" 
 # VM Image data source (auto-detect MayaNAS image)
 data "azurerm_images" "mayanas" {
   count               = var.vm_image_id == "" ? 1 : 0
-  resource_group_name = "rg-mayanas-images"  # Assumed image resource group
+  resource_group_name = "rg-mayanas-images" # Assumed image resource group
   # Remove name_regex - not supported in current provider
 }
 
@@ -582,14 +627,14 @@ resource "azurerm_linux_virtual_machine" "mayanas" {
   count                           = local.node_count
   name                            = var.deployment_type == "active-active" ? "${local.cluster_name}-mayanas-node${count.index + 1}-${random_id.deployment.hex}" : (count.index == 0 ? "${local.cluster_name}-primary-${random_id.deployment.hex}" : "${local.cluster_name}-secondary-${random_id.deployment.hex}")
   location                        = local.resource_group.location
-  resource_group_name            = local.resource_group_name
-  size                           = var.vm_size
-  zone                           = count.index == 0 ? local.node1_zone : local.node2_zone
+  resource_group_name             = local.resource_group_name
+  size                            = var.vm_size
+  zone                            = count.index == 0 ? local.node1_zone : local.node2_zone
   disable_password_authentication = true
-  
+
   # Proximity Placement Group for HA
   proximity_placement_group_id = var.enable_proximity_placement_group && local.node_count > 1 ? azurerm_proximity_placement_group.mayanas[0].id : null
-  
+
   # Spot instance configuration
   priority        = var.use_spot_instance ? "Spot" : "Regular"
   eviction_policy = var.use_spot_instance ? "Deallocate" : null
@@ -670,7 +715,7 @@ resource "azurerm_linux_virtual_machine" "mayanas" {
 resource "azurerm_virtual_machine_data_disk_attachment" "metadata" {
   count              = var.deployment_type != "active-active" ? var.metadata_disk_count : 0
   managed_disk_id    = azurerm_managed_disk.metadata[count.index].id
-  virtual_machine_id = azurerm_linux_virtual_machine.mayanas[0].id  # Primary node for single/active-passive
+  virtual_machine_id = azurerm_linux_virtual_machine.mayanas[0].id # Primary node for single/active-passive
   lun                = count.index
   caching            = "ReadOnly"
 }

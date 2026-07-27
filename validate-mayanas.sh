@@ -728,6 +728,17 @@ use_spot_vms = $USE_SPOT
 force_destroy_buckets = true
 mayanas_startup_wait = 30
 assign_public_ip = $ASSIGN_PUBLIC_IP
+
+# Performance test share configuration 
+shares = [
+  {
+    name        = "demo-test"
+    recordsize  = "1024K"
+    export      = "nfs"
+    nfs_options = "*(rw,sync,no_subtree_check,no_root_squash)"
+    smb_options = ""
+  }
+]
 EOF
             ;;
         aws)
@@ -741,6 +752,17 @@ use_spot_instance = $USE_SPOT
 ssh_cidr_blocks = ["0.0.0.0/0"]
 force_destroy_buckets = true
 assign_public_ip = $ASSIGN_PUBLIC_IP
+
+# Performance test share configuration
+shares = [
+  {
+    name        = "demo-test"
+    recordsize  = "1024K"
+    export      = "nfs"
+    nfs_options = "*(rw,sync,no_subtree_check,no_root_squash)"
+    smb_options = ""
+  }
+]
 EOF
             if [ -n "$ZONE" ]; then
                 echo "availability_zone = \"$ZONE\"" >> terraform.tfvars

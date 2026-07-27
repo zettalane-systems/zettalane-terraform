@@ -459,15 +459,18 @@ zones         = ["$ZONE"]
 cluster_name  = "$CLUSTER_NAME"
 machine_type  = "$MACHINE_TYPE"
 bucket_count  = $BUCKET_COUNT
+metadata_disk_size_gb = 32 
+#blocksize = "4096K"
 deployment_type = "$DEPLOYMENT_TYPE"
 source_image_project = "zettalane-public"
 source_image_family  = "$SOURCE_IMAGE"
+mayanas_startup_wait = 30
 
 # Lustre protocol support
 enable_lustre       = true
 fsname              = "$FSNAME"
 lustre_mdt_backend  = "$MDT_BACKEND"
-pair_index          = $PAIR_INDEX
+cluster_slot        = $PAIR_INDEX
 $([ -n "$JOIN_MGS_NID" ] && echo "lustre_join_mgs_nid = \"$JOIN_MGS_NID\"")
 
 # Cost / access toggles
@@ -501,6 +504,9 @@ vm_image_id         = "$SOURCE_IMAGE"
 # Lustre protocol support (Azure module hardcodes ldiskfs MDT)
 enable_lustre       = true
 fsname              = "$FSNAME"
+# Clusters share one VNet (mayanas-vnet); cluster_slot partitions VIPs so they
+# never collide (>0 → .slot*2+1/.slot*2+2; 0 → random standalone).
+cluster_slot        = $PAIR_INDEX
 $([ -n "$JOIN_MGS_NID" ] && echo "lustre_join_mgs_nid = \"$JOIN_MGS_NID\"")
 EOF
         ;;
@@ -516,6 +522,28 @@ if [ "$SKIP_DEPLOY" = "true" ]; then
 else
     log "terraform init..."
     (cd "$MAYANAS_DIR" && terraform init -input=false) >> "$LOGFILE" 2>&1 || fail "terraform init failed (see $LOGFILE)"
+
+    # ---- Preserve any existing cluster instead of silently replacing it ----
+    # This script reuses ONE tfstate in $MAYANAS_DIR, so a plain
+    # `terraform apply -auto-approve` on a populated state would REPLACE the
+    # previously-deployed cluster (destroying its VMs + GCS buckets) with no
+    # prompt. Instead, move the old state aside so this apply starts fresh:
+    # random_id.suffix regenerates -> new unique resource names -> a NEW cluster
+    # is created ALONGSIDE the old one, which keeps running (orphaned).
+    # Deliberate teardown is --destroy (handled earlier, exits before here).
+    if [ -n "$(cd "$MAYANAS_DIR" && terraform state list 2>/dev/null)" ]; then
+        OLD_ID=$( (cd "$MAYANAS_DIR" && terraform output -raw node1_name 2>/dev/null) \
+                  || (cd "$MAYANAS_DIR" && terraform output -raw cluster_id 2>/dev/null) || echo "unknown" )
+        BAK="$MAYANAS_DIR/terraform.tfstate.preserved-${OLD_ID}-$(date +%Y%m%d_%H%M%S)"
+        warn "Existing cluster '$OLD_ID' found in state — LEAVING IT RUNNING (orphaned), NOT destroying it."
+        warn "  state preserved at: $BAK"
+        warn "  • orphaned VMs + GCS buckets keep incurring cost until torn down"
+        warn "  • to destroy it later: cp '$BAK' '$MAYANAS_DIR/terraform.tfstate' && (cd '$MAYANAS_DIR'; terraform init; terraform destroy)"
+        warn "  • to REPLACE in place instead (destroy old), re-run with --destroy first"
+        mv "$MAYANAS_DIR/terraform.tfstate" "$BAK" || fail "could not move existing tfstate aside"
+        [ -f "$MAYANAS_DIR/terraform.tfstate.backup" ] && mv "$MAYANAS_DIR/terraform.tfstate.backup" "${BAK}.backup"
+        ok "Previous cluster state preserved — deploying a NEW cluster alongside it"
+    fi
 
     log "terraform apply (may take 5-10 min for VM boot + cluster setup)..."
     # awk (not grep) so the filter command always exits 0 regardless of matches —
@@ -594,6 +622,7 @@ use_spot               = $USE_SPOT
 source_image_publisher = "resf"
 source_image_offer     = "rockylinux-x86_64"
 source_image_sku       = "9-base"
+source_image_version   = "9.6.20250531"
 EOF
             ;;
     esac

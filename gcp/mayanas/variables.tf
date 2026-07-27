@@ -18,7 +18,7 @@ variable "cluster_name" {
   description = "Name of the MayaNAS cluster"
   type        = string
   default     = "mayanas"
-  
+
   validation {
     condition     = can(regex("^[a-z]([a-z0-9-]*[a-z0-9])?$", var.cluster_name))
     error_message = "Cluster name must start with a letter, contain only lowercase letters, numbers, and hyphens, and end with a letter or number."
@@ -29,7 +29,7 @@ variable "deployment_type" {
   description = "Type of deployment: single, active-passive, or active-active"
   type        = string
   default     = "active-active"
-  
+
   validation {
     condition     = contains(["single", "active-passive", "active-active"], var.deployment_type)
     error_message = "Deployment type must be one of: single, active-passive, active-active."
@@ -72,7 +72,7 @@ variable "boot_disk_size_gb" {
   description = "Size of the boot disk in GB"
   type        = number
   default     = 20
-  
+
   validation {
     condition     = var.boot_disk_size_gb >= 10 && var.boot_disk_size_gb <= 2000
     error_message = "Boot disk size must be between 10 and 2000 GB."
@@ -97,8 +97,8 @@ variable "bucket_count" {
   default     = 1
 
   validation {
-    condition     = var.bucket_count >= 1 && var.bucket_count <= 12
-    error_message = "Bucket count must be between 1 and 12."
+    condition     = var.bucket_count >= 1 && var.bucket_count <= 16
+    error_message = "Bucket count must be between 1 and 16."
   }
 }
 
@@ -106,7 +106,7 @@ variable "storage_pool_size" {
   description = "Size of each GCS bucket in GB"
   type        = number
   default     = 1000
-  
+
   validation {
     condition     = var.storage_pool_size >= 10 && var.storage_pool_size <= 10000
     error_message = "Storage pool size must be between 10 and 10000 GB."
@@ -117,7 +117,7 @@ variable "metadata_disk_count" {
   description = "Number of metadata disks to create per node"
   type        = number
   default     = 1
-  
+
   validation {
     condition     = var.metadata_disk_count >= 1 && var.metadata_disk_count <= 4
     error_message = "Metadata disk count must be between 1 and 4."
@@ -128,7 +128,7 @@ variable "metadata_disk_size_gb" {
   description = "Size of each metadata disk in GB"
   type        = number
   default     = 100
-  
+
   validation {
     condition     = var.metadata_disk_size_gb >= 10 && var.metadata_disk_size_gb <= 2000
     error_message = "Metadata disk size must be between 10 and 2000 GB."
@@ -156,8 +156,8 @@ variable "metadata_disk_type" {
 variable "zones" {
   description = "Zones for deployment. If empty, auto-selects based on multi_zone setting. Specify 1 zone for single-zone, 2 zones for multi-zone deployment."
   type        = list(string)
-  default     = []  # Auto-select based on multi_zone
-  
+  default     = [] # Auto-select based on multi_zone
+
   validation {
     condition     = length(var.zones) <= 2
     error_message = "Basic module supports maximum 2 zones."
@@ -174,9 +174,9 @@ variable "vip_cidr_range" {
   description = "Manual override for VIP CIDR range (e.g., '10.100.5.0/24'). If not specified, automatically finds available range in 10.100.x.0/24 space."
   type        = string
   default     = ""
-  
+
   validation {
-    condition = var.vip_cidr_range == "" || can(cidrhost(var.vip_cidr_range, 0))
+    condition     = var.vip_cidr_range == "" || can(cidrhost(var.vip_cidr_range, 0))
     error_message = "VIP CIDR range must be a valid CIDR notation (e.g., '10.100.5.0/24') or empty for automatic detection."
   }
 }
@@ -239,10 +239,10 @@ variable "shares" {
   type = list(object({
     name         = string
     recordsize   = string
-    export       = string  # "nfs", "nfs3", "smb", or "multi"
+    export       = string # "nfs", "nfs3", "smb", or "multi"
     nfs_options  = optional(string, "")
     smb_options  = optional(string, "")
-    smb_profile  = optional(string, "")  # "posix", "windows", or "multiprotocol"
+    smb_profile  = optional(string, "") # "posix", "windows", or "multiprotocol"
     smb_user     = optional(string, "")
     smb_password = optional(string, "")
     smb_uid      = optional(string, "")
@@ -257,14 +257,14 @@ variable "shares" {
     ])
     error_message = "Share names must contain only alphanumeric characters, hyphens, and underscores."
   }
-  
+
   validation {
     condition = alltrue([
       for share in var.shares : contains(["nfs", "nfs3", "smb", "multi"], share.export)
     ])
     error_message = "Share export type must be 'nfs', 'nfs3', 'smb', or 'multi'."
   }
-  
+
   validation {
     condition = alltrue([
       for share in var.shares : contains(["512K", "1024K", "2048K", "4096K"], share.recordsize)
@@ -298,7 +298,7 @@ variable "boot_disk_type" {
   default     = "auto"
 
   validation {
-    condition = contains(["auto", "pd-standard", "pd-balanced", "pd-ssd", "hyperdisk-balanced", "hyperdisk-balanced-ha", "hyperdisk-throughput"], var.boot_disk_type)
+    condition     = contains(["auto", "pd-standard", "pd-balanced", "pd-ssd", "hyperdisk-balanced", "hyperdisk-balanced-ha", "hyperdisk-throughput"], var.boot_disk_type)
     error_message = "Boot disk type must be one of: auto, pd-standard, pd-balanced, pd-ssd, hyperdisk-balanced, hyperdisk-balanced-ha, hyperdisk-throughput."
   }
 }
@@ -310,14 +310,14 @@ variable "enable_lustre" {
   default     = false
 }
 
-variable "pair_index" {
+variable "cluster_slot" {
   description = "Index of this HA pair within its VPC subnet, used to deterministically partition VIPs. 0 = first/standalone (random VIP allocation). 1, 2, … = additional pairs sharing the same subnet (each pair claims 2 contiguous IPs in the alias range, no random collisions). Set to 1 on the first joining cluster, 2 on the second, etc. Range: 0-126."
   type        = number
   default     = 0
 
   validation {
-    condition     = var.pair_index >= 0 && var.pair_index <= 126
-    error_message = "pair_index must be between 0 and 126 (constrained by /24 alias range, 2 IPs per pair)."
+    condition     = var.cluster_slot >= 0 && var.cluster_slot <= 126
+    error_message = "cluster_slot must be between 0 and 126 (constrained by /24 alias range, 2 IPs per pair)."
   }
 }
 

@@ -294,6 +294,7 @@ export MAYANAS_LUSTRE_FSNAME="${lustre_fsname}"
 export MAYANAS_LUSTRE_DOM_THRESHOLD="${lustre_dom_threshold}"
 # MDT disk name (used by cluster_setup2.sh to find the disk via Azure IMDS)
 export MAYANAS_LUSTRE_MDT_DISK="${lustre_mdt_disk_name}"
+export MAYANAS_LUSTRE_MDT_LAZYINIT="${lustre_mdt_lazyinit}"
 %{ endif ~}
 
 %{ if deployment_type == "single" ~}
@@ -419,6 +420,7 @@ export MAYANAS_LUSTRE_FSNAME="${lustre_fsname}"
 export MAYANAS_LUSTRE_DOM_THRESHOLD="${lustre_dom_threshold}"
 # MDT disk name (used by cluster_setup2.sh to find the disk via Azure IMDS)
 export MAYANAS_LUSTRE_MDT_DISK="${lustre_mdt_disk_name}"
+export MAYANAS_LUSTRE_MDT_LAZYINIT="${lustre_mdt_lazyinit}"
 %{ endif ~}
 
 # Network configuration
@@ -499,6 +501,7 @@ export MAYANAS_LUSTRE_FSNAME="${lustre_fsname}"
 export MAYANAS_LUSTRE_DOM_THRESHOLD="${lustre_dom_threshold}"
 # MDT disk name (used by cluster_setup2.sh to find the disk via Azure IMDS)
 export MAYANAS_LUSTRE_MDT_DISK="${lustre_mdt_disk_name}"
+export MAYANAS_LUSTRE_MDT_LAZYINIT="${lustre_mdt_lazyinit}"
 %{ endif ~}
 
 # Network configuration
