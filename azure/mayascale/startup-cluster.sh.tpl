@@ -119,6 +119,42 @@ fi
 
 echo "Primary node calling MayaScale cluster setup..."
 
+# Object cold tier (objbacker): fetch the storage account key BEFORE writing
+# .startup-config, so the file below carries a plain value like every other export.
+# This must NOT live inside the heredoc: it is unquoted, so a $(...) in there would run at
+# WRITE time -- before az login -- and its empty output would be baked in permanently.
+# On Azure the accessID IS the storage account name; the key is fetched with the VM's
+# managed identity, so it never enters terraform or the state file.
+STORAGE_ACCESS_KEY=""
+if [ -n "${s3_access_key}" ]; then
+    # The identity is not usable the moment the VM boots: az login must succeed before any
+    # az call, and can take a couple of minutes to become available. Same 5x30s budget
+    # mayanas uses.
+    echo "$(date): Authenticating with managed identity for the object cold tier..."
+    for i in {1..5}; do
+        if az login --identity 2>/dev/null; then
+            echo "$(date): Managed identity authentication successful"
+            break
+        fi
+        echo "$(date): Managed identity auth attempt $i failed, retrying in 30s..."
+        sleep 30
+    done
+
+    echo "$(date): Retrieving storage access key for the object cold tier..."
+    for i in {1..5}; do
+        STORAGE_ACCESS_KEY=$(az storage account keys list --resource-group "$RESOURCE_GROUP" --account-name "${s3_access_key}" --query "[0].value" -o tsv 2>/dev/null || echo "")
+        if [ -n "$STORAGE_ACCESS_KEY" ]; then
+            echo "$(date): Storage access key retrieved successfully"
+            break
+        fi
+        echo "$(date): Storage access key retrieval attempt $i failed, retrying in 30s..."
+        sleep 30
+    done
+    if [ -z "$STORAGE_ACCESS_KEY" ]; then
+        echo "WARNING: could not retrieve the storage access key; the cold tier will be skipped"
+    fi
+fi
+
 # Save deployment context before calling setup script (for recovery/debugging)
 echo "$(date): Saving deployment context to /opt/mayastor/config/.startup-config..."
 mkdir -p /opt/mayastor/config
@@ -151,6 +187,15 @@ export MAYASCALE_INSTANCE_NAME="$INSTANCE_NAME"
 export MAYASCALE_RESOURCE_GROUP="${resource_group}"
 export MAYASCALE_PROJECT_ID="${resource_group}"  # Azure equivalent of GCP PROJECT_ID - required by failover.pl
 export MAYASCALE_PERFORMANCE_POLICY="${performance_policy}"
+
+# Object cold tier (objbacker): the buckets tenant datasets are replicated onto
+# from the local-NVMe hot pool. Empty unless terraform ran with bucket_count > 0.
+# On Azure the accessID IS the storage account name; the secret is fetched here
+# with the VM's managed identity so it never lands in terraform state.
+export MAYASCALE_S3_ACCESS_KEY="${s3_access_key}"
+export MAYASCALE_S3_SECRET_KEY="$STORAGE_ACCESS_KEY"
+export MAYASCALE_COLD_BUCKETS_NODE1="${bucket_node1}"
+export MAYASCALE_COLD_BUCKETS_NODE2="${bucket_node2}"
 export MAYASCALE_NVME_COUNT="${nvme_count}"
 export MAYASCALE_CLUSTER_ID="${resource_id}"
 %{ if mayascale_startup_wait != "" ~}

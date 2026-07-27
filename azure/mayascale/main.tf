@@ -857,6 +857,13 @@ locals {
     client_protocol        = var.client_protocol
     client_exports_enabled = var.client_exports_enabled
     ha_data                = var.ha_data ? 1 : 0
+    # Object cold tier: empty when bucket_count = 0, so the startup skips it.
+    # s3_access_key is the storage ACCOUNT NAME -- on Azure that IS the accessID;
+    # the node fetches the secret at runtime with its managed identity, so the
+    # key never enters terraform or the state file.
+    s3_access_key = local.object_tier_enabled ? azurerm_storage_account.mayascale[0].name : ""
+    bucket_node1  = local.object_tier_enabled ? join(" ", slice(azurerm_storage_container.mayascale[*].name, 0, var.bucket_count)) : ""
+    bucket_node2  = local.object_tier_enabled ? join(" ", slice(azurerm_storage_container.mayascale[*].name, var.bucket_count, local.total_bucket_count)) : ""
     # Share configuration
     shares = jsonencode(var.shares)
     # Startup wait configuration
@@ -991,4 +998,49 @@ resource "azurerm_role_assignment" "vm_contributor" {
   scope                = local.resource_group.id
   role_definition_name = "Virtual Machine Contributor"
   principal_id         = azurerm_linux_virtual_machine.mayascale[count.index].identity[0].principal_id
+}
+
+# ---------------------------------------------------------------------------
+# Object storage for the objbacker cold tier (tenant datasets)
+#
+# The hot tier is local NVMe (zvol -> nvmet); this is the cold side that hot
+# datasets are replicated onto (zfs send). Buckets are PER NODE, mirroring the
+# mayanas layout: the account holds bucket_count * 2 containers, the first
+# bucket_count belong to node1 and the remainder to node2, so each node builds
+# its own objbacker pool and neither depends on the peer's object namespace.
+# bucket_count = 0 (default) creates nothing -- existing clusters are unchanged.
+# ---------------------------------------------------------------------------
+locals {
+  object_tier_enabled = var.bucket_count > 0
+  total_bucket_count  = var.bucket_count * 2
+
+  # DNS-compliant: 3-24 chars, lowercase alnum only. cluster_name is <=15.
+  storage_account_name = "st${replace(lower(var.cluster_name), "-", "")}${substr(random_id.deployment.hex, 0, 6)}"
+}
+
+resource "azurerm_storage_account" "mayascale" {
+  count                    = local.object_tier_enabled ? 1 : 0
+  name                     = local.storage_account_name
+  resource_group_name      = local.resource_group_name
+  location                 = local.resource_group.location
+  account_tier             = split("_", var.storage_account_type)[0]
+  account_replication_type = split("_", var.storage_account_type)[1]
+  account_kind             = "StorageV2"
+
+  https_traffic_only_enabled      = true
+  min_tls_version                 = "TLS1_2"
+  allow_nested_items_to_be_public = false
+
+  tags = merge(var.tags, {
+    Product     = "MayaScale"
+    Terraform   = "true"
+    ClusterName = var.cluster_name
+  })
+}
+
+resource "azurerm_storage_container" "mayascale" {
+  count                 = local.total_bucket_count
+  name                  = "${var.cluster_name}-data-${count.index}-${random_id.deployment.hex}"
+  storage_account_id    = azurerm_storage_account.mayascale[0].id
+  container_access_type = "private"
 }

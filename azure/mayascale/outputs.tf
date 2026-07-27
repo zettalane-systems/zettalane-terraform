@@ -384,3 +384,28 @@ output "csi_backend" {
     }
   }
 }
+# ---------------------------------------------------------------------------
+# Object storage (objbacker cold tier) -- empty unless bucket_count > 0.
+#
+# The account key is deliberately NOT exposed. On Azure the accessID IS the
+# storage account name (see configd docs/cloud_disk.txt); the node fetches the
+# key at runtime with its managed identity, so terraform never holds the secret
+# and it never lands in state. Mirrors the mayanas startup contract.
+# ---------------------------------------------------------------------------
+output "storage_account_name" {
+  description = "Storage account backing the objbacker cold tier. Also the accessID for `mayacli create cloud` -- the secret is fetched on the node via managed identity."
+  value       = local.object_tier_enabled ? azurerm_storage_account.mayascale[0].name : ""
+}
+
+output "storage_containers" {
+  description = "All blob containers created for the objbacker cold tier"
+  value       = azurerm_storage_container.mayascale[*].name
+}
+
+output "buckets_by_node" {
+  description = "Cold-tier containers split per node: the first bucket_count are node1's, the remainder node2's, so each node builds its own objbacker pool"
+  value = local.object_tier_enabled ? {
+    node1 = slice(azurerm_storage_container.mayascale[*].name, 0, var.bucket_count)
+    node2 = slice(azurerm_storage_container.mayascale[*].name, var.bucket_count, local.total_bucket_count)
+  } : null
+}

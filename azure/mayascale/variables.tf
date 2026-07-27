@@ -556,3 +556,25 @@ variable "mayascale_startup_wait" {
     error_message = "MayaScale startup wait must be null or 0 or greater."
   }
 }
+# Object Storage (objbacker cold tier for tenant datasets)
+variable "bucket_count" {
+  description = "Number of Azure Blob containers to create PER NODE for the objbacker cold tier (tenant datasets replicated off the local-NVMe hot pool). 0 = no object storage (default; nothing is created). MayaScale is always a pair, so the account holds bucket_count * 2 containers -- the first bucket_count are node1's, the rest node2's."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.bucket_count >= 0 && var.bucket_count <= 4
+    error_message = "Bucket count must be between 0 and 4 (0 disables the object cold tier)."
+  }
+}
+
+variable "storage_account_type" {
+  description = "Azure Storage Account tier/replication for the objbacker cold tier, as Tier_Replication (e.g. Standard_LRS, Standard_ZRS, Premium_LRS). Only used when bucket_count > 0."
+  type        = string
+  default     = "Standard_LRS"
+
+  validation {
+    condition     = can(regex("^(Standard|Premium)_(LRS|ZRS|GRS|RAGRS|GZRS|RAGZRS)$", var.storage_account_type))
+    error_message = "Storage account type must be Tier_Replication, e.g. Standard_LRS or Premium_ZRS."
+  }
+}
