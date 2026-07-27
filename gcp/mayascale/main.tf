@@ -12,7 +12,7 @@ locals {
   # Image path: use specific image if set, otherwise use image family for "latest"
   source_image_path = var.source_image != "" ? (
     "projects/${var.source_image_project}/global/images/${var.source_image}"
-  ) : (
+    ) : (
     "projects/${var.source_image_project}/global/images/family/${var.source_image_family}"
   )
 }
@@ -47,28 +47,29 @@ resource "random_password" "mayascale_password" {
 # Calculate VIP address with simplified marketplace-compatible logic
 locals {
   # Simple deterministic hash using region name
-  region_hash = sum([for i, char in split("", local.derived_region) : (i + 1) * 3])
-  default_range_index = local.region_hash % 256
+  region_hash            = sum([for i, char in split("", local.derived_region) : (i + 1) * 3])
+  default_range_index    = local.region_hash % 256
   default_vip_cidr_range = "10.100.${local.default_range_index}.0/24"
 
   # Use region-based default VIP range
   vip_cidr_range = local.default_vip_cidr_range
 
   # Extract IP range information for VIP calculation
-  range_parts = split("/", local.vip_cidr_range)
+  range_parts   = split("/", local.vip_cidr_range)
   range_base_ip = local.range_parts[0]
   base_ip_parts = split(".", local.range_base_ip)
 
   # Calculate VIP addresses within the /24 range using random value
   full_random_value = random_id.suffix.dec
 
-  # Calculate VIP offsets within the available range (1-254 for /24) - matching MayaNAS logic
-  vip_offset1 = (local.full_random_value % 254) + 1
-  vip_offset2 = (floor(local.full_random_value / 256) % 254) + 1
+  # cluster_slot > 0: deterministic 2-slot-per-pair; 0: random fallback (matches gcp/mayanas)
+  vip_offset1       = var.cluster_slot > 0 ? (var.cluster_slot * 2 + 1) : ((local.full_random_value % 254) + 1)
+  vip_offset2       = var.cluster_slot > 0 ? (var.cluster_slot * 2 + 2) : ((floor(local.full_random_value / 256) % 254) + 1)
+  vip_offset2_final = local.vip_offset1 == local.vip_offset2 ? ((local.vip_offset2 % 254) + 1) : local.vip_offset2
 
-  # Final VIP addresses: 10.100.{third_octet}.{random_offset}
-  vip_address = "${local.base_ip_parts[0]}.${local.base_ip_parts[1]}.${local.base_ip_parts[2]}.${local.vip_offset1}"
-  vip_address_2 = "${local.base_ip_parts[0]}.${local.base_ip_parts[1]}.${local.base_ip_parts[2]}.${local.vip_offset2}"
+  # Final VIP addresses: 10.100.{third_octet}.{offset}
+  vip_address   = "${local.base_ip_parts[0]}.${local.base_ip_parts[1]}.${local.base_ip_parts[2]}.${local.vip_offset1}"
+  vip_address_2 = "${local.base_ip_parts[0]}.${local.base_ip_parts[1]}.${local.base_ip_parts[2]}.${local.vip_offset2_final}"
 
   # MayaScale deployment configuration
   cluster_name = var.cluster_name
@@ -77,9 +78,9 @@ locals {
   placement_policy_id = (
     var.placement_policy_name != "" ?
     (length(data.google_compute_resource_policy.existing_placement_policy) > 0 ?
-      data.google_compute_resource_policy.existing_placement_policy[0].id : "") :
+    data.google_compute_resource_policy.existing_placement_policy[0].id : "") :
     (length(google_compute_resource_policy.mayascale_placement_policy) > 0 ?
-      google_compute_resource_policy.mayascale_placement_policy[0].id : "")
+    google_compute_resource_policy.mayascale_placement_policy[0].id : "")
   )
 }
 
@@ -92,27 +93,27 @@ locals {
     # Regional: Client in same zone as Node1 (reads local), writes have cross-zone RAID1 sync
     # Read IOPS: Same as zonal | Write IOPS: 0.90× of zonal (cross-zone sync overhead)
     "regional-ultra-performance" = {
-      target_write_iops     = 720000   # 0.90× zonal (cross-zone RAID1 sync overhead)
-      target_read_iops      = 1800000  # Same as zonal (client reads from same-zone Node1)
-      target_write_latency  = 2000     # <2ms (cross-zone sync adds ~700µs vs zonal <1ms)
-      target_bandwidth_mbps = 8500     # Same as zonal (network sufficient for throughput)
+      target_write_iops     = 720000  # 0.90× zonal (cross-zone RAID1 sync overhead)
+      target_read_iops      = 1800000 # Same as zonal (client reads from same-zone Node1)
+      target_write_latency  = 2000    # <2ms (cross-zone sync adds ~700µs vs zonal <1ms)
+      target_bandwidth_mbps = 8500    # Same as zonal (network sufficient for throughput)
       availability_strategy = "cross-zone"
       capacity_optimization = "performance"
-      nvme_requirement_gb   = 6000     # 16 SSDs × 375GB
-      machine_type         = "n2-highcpu-64"
-      local_ssd_count      = 16
+      nvme_requirement_gb   = 6000 # 16 SSDs × 375GB
+      machine_type          = "n2-highcpu-64"
+      local_ssd_count       = 16
     }
 
     "zonal-ultra-performance" = {
-      target_write_iops     = 800000   # Measured: 866K @ 884µs (QD24/NJ32) <1ms. Marketing: clean "800K"
-      target_read_iops      = 2000000  # Measured: 2.03M @ 1018µs (~1ms). Client 75Gbps may limit.
-      target_write_latency  = 1000     # Actual at target IOPS: 884µs, 1ms = 1.1× safety margin
-      target_bandwidth_mbps = 8500     # Measured: 10.3 GB/s read throughput
+      target_write_iops     = 800000  # Measured: 866K @ 884µs (QD24/NJ32) <1ms. Marketing: clean "800K"
+      target_read_iops      = 2000000 # Measured: 2.03M @ 1018µs (~1ms). Client 75Gbps may limit.
+      target_write_latency  = 1000    # Actual at target IOPS: 884µs, 1ms = 1.1× safety margin
+      target_bandwidth_mbps = 8500    # Measured: 10.3 GB/s read throughput
       availability_strategy = "same-zone"
       capacity_optimization = "performance"
-      nvme_requirement_gb   = 6000     # 16 SSDs × 375GB
-      machine_type         = "n2-highcpu-64"
-      local_ssd_count      = 16
+      nvme_requirement_gb   = 6000 # 16 SSDs × 375GB
+      machine_type          = "n2-highcpu-64"
+      local_ssd_count       = 16
     }
 
     # High-performance tiers (n2-highcpu-32, 8 NVMe, 50 Gbps Tier_1)
@@ -120,27 +121,27 @@ locals {
     # Note: Peak IOPS can be 25% higher but with >1ms latency
     # Regional: Client in same zone as Node1 (reads local), writes have cross-zone RAID1 sync
     "regional-high-performance" = {
-      target_write_iops     = 315000   # 0.90× zonal (cross-zone RAID1 sync overhead)
-      target_read_iops      = 900000   # Same as zonal (client reads from same-zone Node1)
-      target_write_latency  = 2000     # <2ms (cross-zone sync adds ~700µs vs zonal <1ms)
-      target_bandwidth_mbps = 5000     # Same as zonal
+      target_write_iops     = 315000 # 0.90× zonal (cross-zone RAID1 sync overhead)
+      target_read_iops      = 900000 # Same as zonal (client reads from same-zone Node1)
+      target_write_latency  = 2000   # <2ms (cross-zone sync adds ~700µs vs zonal <1ms)
+      target_bandwidth_mbps = 5000   # Same as zonal
       availability_strategy = "cross-zone"
       capacity_optimization = "balanced"
-      nvme_requirement_gb   = 3000     # 8 SSDs × 375GB
-      machine_type         = "n2-highcpu-32"
-      local_ssd_count      = 8
+      nvme_requirement_gb   = 3000 # 8 SSDs × 375GB
+      machine_type          = "n2-highcpu-32"
+      local_ssd_count       = 8
     }
 
     "zonal-high-performance" = {
-      target_write_iops     = 350000   # Measured: 361K @ 883µs (QD16/NJ20) <1ms. Marketing: clean "350K"
-      target_read_iops      = 900000   # Measured: 922K @ 830µs (QD24/NJ32) <1ms. Marketing: clean "900K"
-      target_write_latency  = 1000     # Actual at target IOPS: 883µs, 1ms = 1.1× safety margin
-      target_bandwidth_mbps = 5000     # Measured: 5.6 GB/s read throughput
+      target_write_iops     = 350000 # Measured: 361K @ 883µs (QD16/NJ20) <1ms. Marketing: clean "350K"
+      target_read_iops      = 900000 # Measured: 922K @ 830µs (QD24/NJ32) <1ms. Marketing: clean "900K"
+      target_write_latency  = 1000   # Actual at target IOPS: 883µs, 1ms = 1.1× safety margin
+      target_bandwidth_mbps = 5000   # Measured: 5.6 GB/s read throughput
       availability_strategy = "same-zone"
       capacity_optimization = "balanced"
-      nvme_requirement_gb   = 3000     # 8 SSDs × 375GB (capacity tier, same IOPS as Medium)
-      machine_type         = "n2-highcpu-32"
-      local_ssd_count      = 8
+      nvme_requirement_gb   = 3000 # 8 SSDs × 375GB (capacity tier, same IOPS as Medium)
+      machine_type          = "n2-highcpu-32"
+      local_ssd_count       = 8
     }
 
     # Medium-performance tiers (n2-highcpu-16, 4 NVMe, 32 Gbps)
@@ -148,27 +149,27 @@ locals {
     # Note: Peak IOPS can be 9% higher but with >1ms latency
     # Regional: Client in same zone as Node1 (reads local), writes have cross-zone RAID1 sync
     "regional-medium-performance" = {
-      target_write_iops     = 180000   # 0.90× zonal (cross-zone RAID1 sync overhead)
-      target_read_iops      = 700000   # Same as zonal (client reads from same-zone Node1)
-      target_write_latency  = 2000     # <2ms (cross-zone sync adds ~700µs vs zonal <1ms)
-      target_bandwidth_mbps = 4000     # Same as zonal
+      target_write_iops     = 180000 # 0.90× zonal (cross-zone RAID1 sync overhead)
+      target_read_iops      = 700000 # Same as zonal (client reads from same-zone Node1)
+      target_write_latency  = 2000   # <2ms (cross-zone sync adds ~700µs vs zonal <1ms)
+      target_bandwidth_mbps = 4000   # Same as zonal
       availability_strategy = "cross-zone"
       capacity_optimization = "balanced"
-      nvme_requirement_gb   = 1500     # 4 SSDs × 375GB
-      machine_type         = "n2-highcpu-16"
-      local_ssd_count      = 4
+      nvme_requirement_gb   = 1500 # 4 SSDs × 375GB
+      machine_type          = "n2-highcpu-16"
+      local_ssd_count       = 4
     }
 
     "zonal-medium-performance" = {
-      target_write_iops     = 200000   # Measured: 220K @ 872µs (QD16/NJ12) <1ms. Marketing: clean "200K"
-      target_read_iops      = 700000   # Measured: 699K @ 822µs (QD24/NJ24) <1ms. Marketing: clean "700K"
-      target_write_latency  = 1000     # Actual at target IOPS: 872µs, 1ms = 1.1× safety margin
-      target_bandwidth_mbps = 4000     # Measured: 5.1 GB/s read throughput
+      target_write_iops     = 200000 # Measured: 220K @ 872µs (QD16/NJ12) <1ms. Marketing: clean "200K"
+      target_read_iops      = 700000 # Measured: 699K @ 822µs (QD24/NJ24) <1ms. Marketing: clean "700K"
+      target_write_latency  = 1000   # Actual at target IOPS: 872µs, 1ms = 1.1× safety margin
+      target_bandwidth_mbps = 4000   # Measured: 5.1 GB/s read throughput
       availability_strategy = "same-zone"
       capacity_optimization = "balanced"
-      nvme_requirement_gb   = 1500     # 4 SSDs × 375GB (FIXED: was 750GB)
-      machine_type         = "n2-highcpu-16"
-      local_ssd_count      = 4
+      nvme_requirement_gb   = 1500 # 4 SSDs × 375GB (FIXED: was 750GB)
+      machine_type          = "n2-highcpu-16"
+      local_ssd_count       = 4
     }
 
     # Standard-performance tiers (n2-highcpu-8, 2 NVMe, 16 Gbps)
@@ -176,40 +177,40 @@ locals {
     # Note: Peak IOPS can be 4% higher but with >1ms latency
     # Regional: Client in same zone as Node1 (reads local), writes have cross-zone RAID1 sync
     "regional-standard-performance" = {
-      target_write_iops     = 120000   # 0.90× zonal (cross-zone RAID1 sync overhead)
-      target_read_iops      = 380000   # Same as zonal (client reads from same-zone Node1)
-      target_write_latency  = 2000     # <2ms (cross-zone sync adds ~700µs vs zonal <1ms)
-      target_bandwidth_mbps = 2000     # Same as zonal
+      target_write_iops     = 120000 # 0.90× zonal (cross-zone RAID1 sync overhead)
+      target_read_iops      = 380000 # Same as zonal (client reads from same-zone Node1)
+      target_write_latency  = 2000   # <2ms (cross-zone sync adds ~700µs vs zonal <1ms)
+      target_bandwidth_mbps = 2000   # Same as zonal
       availability_strategy = "cross-zone"
       capacity_optimization = "cost"
-      nvme_requirement_gb   = 750      # 2 SSDs × 375GB
-      machine_type         = "n2-highcpu-8"
-      local_ssd_count      = 2
+      nvme_requirement_gb   = 750 # 2 SSDs × 375GB
+      machine_type          = "n2-highcpu-8"
+      local_ssd_count       = 2
     }
 
     "zonal-standard-performance" = {
-      target_write_iops     = 130000   # Measured: 136K @ 938µs (QD16/NJ8) <1ms. Marketing: clean "130K"
-      target_read_iops      = 380000   # Measured: 388K @ 989µs (QD16/NJ24) <1ms. Marketing: clean "380K"
-      target_write_latency  = 1000     # Actual at target IOPS: 938µs, 1ms = 1.1× safety margin
-      target_bandwidth_mbps = 2000     # Measured: 2.5 GB/s read throughput
+      target_write_iops     = 130000 # Measured: 136K @ 938µs (QD16/NJ8) <1ms. Marketing: clean "130K"
+      target_read_iops      = 380000 # Measured: 388K @ 989µs (QD16/NJ24) <1ms. Marketing: clean "380K"
+      target_write_latency  = 1000   # Actual at target IOPS: 938µs, 1ms = 1.1× safety margin
+      target_bandwidth_mbps = 2000   # Measured: 2.5 GB/s read throughput
       availability_strategy = "same-zone"
       capacity_optimization = "cost"
-      nvme_requirement_gb   = 750      # 2 SSDs × 375GB
-      machine_type         = "n2-highcpu-8"
-      local_ssd_count      = 2
+      nvme_requirement_gb   = 750 # 2 SSDs × 375GB
+      machine_type          = "n2-highcpu-8"
+      local_ssd_count       = 2
     }
 
     # Regional: Client in same zone as Node1 (reads local), writes have cross-zone RAID1 sync
     "regional-basic-performance" = {
-      target_write_iops     = 60000    # 0.90× zonal (cross-zone RAID1 sync overhead)
-      target_read_iops      = 100000   # Same as zonal (client reads from same-zone Node1)
-      target_write_latency  = 2000     # <2ms (cross-zone sync adds ~700µs vs zonal <1ms)
-      target_bandwidth_mbps = 1000     # Same as zonal
+      target_write_iops     = 60000  # 0.90× zonal (cross-zone RAID1 sync overhead)
+      target_read_iops      = 100000 # Same as zonal (client reads from same-zone Node1)
+      target_write_latency  = 2000   # <2ms (cross-zone sync adds ~700µs vs zonal <1ms)
+      target_bandwidth_mbps = 1000   # Same as zonal
       availability_strategy = "cross-zone"
       capacity_optimization = "cost"
-      nvme_requirement_gb   = 375      # 1 SSD × 375GB per node
-      machine_type         = "n2-highcpu-4"
-      local_ssd_count      = 1
+      nvme_requirement_gb   = 375 # 1 SSD × 375GB per node
+      machine_type          = "n2-highcpu-4"
+      local_ssd_count       = 1
     }
 
     # Basic-performance tier (n2-highcpu-4, 1 NVMe, 10 Gbps)
@@ -217,15 +218,15 @@ locals {
     # Note: Single SSD hits thermal throttling at 146K read @ 15ms - not usable
     # See: PERFORMANCE_VALIDATION.md for detailed analysis
     "zonal-basic-performance" = {
-      target_write_iops     = 75000    # Measured: 75K @ 858µs (QD16/NJ4) <1ms. Marketing: clean "75K"
-      target_read_iops      = 100000   # Measured: 102K @ 630µs (QD16/NJ4) <1ms. Marketing: clean "100K"
-      target_write_latency  = 1000     # Actual at target IOPS: 858µs, 1ms = 1.2× safety margin
-      target_bandwidth_mbps = 1000     # Measured: 1.17 GB/s read throughput
+      target_write_iops     = 75000  # Measured: 75K @ 858µs (QD16/NJ4) <1ms. Marketing: clean "75K"
+      target_read_iops      = 100000 # Measured: 102K @ 630µs (QD16/NJ4) <1ms. Marketing: clean "100K"
+      target_write_latency  = 1000   # Actual at target IOPS: 858µs, 1ms = 1.2× safety margin
+      target_bandwidth_mbps = 1000   # Measured: 1.17 GB/s read throughput
       availability_strategy = "same-zone"
       capacity_optimization = "cost"
-      nvme_requirement_gb   = 375      # 1 SSD × 375GB
-      machine_type         = "n2-highcpu-4"
-      local_ssd_count      = 1
+      nvme_requirement_gb   = 375 # 1 SSD × 375GB
+      machine_type          = "n2-highcpu-4"
+      local_ssd_count       = 1
     }
   }
 
@@ -239,7 +240,7 @@ locals {
   # Works for all machine families: n2-highcpu-32, c4-standard-48, c4-standard-48-lssd, etc.
   # Regex captures digits after last dash before optional suffix: -(\\d+)(?:-.*)?$
   # TIER_1 requires 30+ vCPUs (applies to N2, C3, C3D, C4, N4, etc.)
-  machine_type_vcpus = tonumber(regex("-(\\d+)(?:-.*)?$", local.selected_machine_type)[0])
+  machine_type_vcpus      = tonumber(regex("-(\\d+)(?:-.*)?$", local.selected_machine_type)[0])
   enable_tier1_networking = local.machine_type_vcpus >= 30
 
   # Zone strategy based on availability requirements
@@ -250,33 +251,33 @@ locals {
   ]
 
   zone_strategy = local.active_policy.availability_strategy == "same-zone" ? [
-    var.zone,  # Both nodes in same zone (different racks)
+    var.zone, # Both nodes in same zone (different racks)
     var.zone
-  ] : [
-    var.zone,                    # Primary in specified zone
-    local.available_zones[1]     # Secondary in different zone
+    ] : [
+    var.zone,                # Primary in specified zone
+    local.available_zones[1] # Secondary in different zone
   ]
 
   # Network configuration
   node_ips = [
-    cidrhost("10.100.0.0/24", 10),  # Primary node IP
-    cidrhost("10.100.0.0/24", 11)   # Secondary node IP
+    cidrhost("10.100.0.0/24", 10), # Primary node IP
+    cidrhost("10.100.0.0/24", 11)  # Secondary node IP
   ]
 
   # Backend network IPs for replication traffic
   backend_node_ips = [
-    cidrhost("10.200.0.0/24", 10),  # Primary backend IP
-    cidrhost("10.200.0.0/24", 11)   # Secondary backend IP
+    cidrhost("10.200.0.0/24", 10), # Primary backend IP
+    cidrhost("10.200.0.0/24", 11)  # Secondary backend IP
   ]
 
   # Labels
   deployment_labels = {
-    application       = "mayascale"
-    managed-by       = "terraform"
-    deployment-name  = var.cluster_name
-    performance-policy = var.performance_policy
+    application           = "mayascale"
+    managed-by            = "terraform"
+    deployment-name       = var.cluster_name
+    performance-policy    = var.performance_policy
     availability-strategy = local.active_policy.availability_strategy
-    cost-tier        = local.active_policy.capacity_optimization
+    cost-tier             = local.active_policy.capacity_optimization
   }
 }
 
@@ -325,14 +326,14 @@ data "google_compute_resource_policy" "existing_placement_policy" {
 
 # Create new placement policy (if not joining an existing one)
 resource "google_compute_resource_policy" "mayascale_placement_policy" {
-  count       = local.active_policy.availability_strategy == "same-zone" && var.placement_policy_name == "" ? 1 : 0
+  count       = var.enable_colocation && local.active_policy.availability_strategy == "same-zone" && var.placement_policy_name == "" ? 1 : 0
   name        = "${local.cluster_name}-placement-policy"
   region      = var.region
   description = "Compact placement policy for MayaScale cluster - co-locates nodes on same/adjacent racks for minimal latency"
 
   group_placement_policy {
-    vm_count    = 2 + var.client_count  # 2 storage nodes + optional client(s)
-    collocation = "COLLOCATED"          # Co-locate on same or adjacent racks (reduces latency from 0.6-0.8ms to 0.1ms)
+    vm_count    = 2 + var.client_count # 2 storage nodes + optional client(s)
+    collocation = "COLLOCATED"         # Co-locate on same or adjacent racks (reduces latency from 0.6-0.8ms to 0.1ms)
   }
 
   lifecycle {
@@ -388,8 +389,8 @@ data "google_compute_subnetwork" "default" {
 resource "google_compute_network" "mayascale_backend" {
   name                    = "${local.cluster_name}-backend"
   auto_create_subnetworks = false
-  mtu                     = 8896  # Enable jumbo frames for maximum throughput
-  description            = "Dedicated backend network for MayaScale replication traffic"
+  mtu                     = 8896 # Enable jumbo frames for maximum throughput
+  description             = "Dedicated backend network for MayaScale replication traffic"
 }
 
 resource "google_compute_subnetwork" "mayascale_backend_subnet" {
@@ -466,7 +467,7 @@ resource "google_compute_instance" "mayascale_nodes" {
       image = local.source_image_path
       size  = 20
       # C4, C3, C3D require hyperdisk-balanced (don't support pd-standard)
-      type  = (
+      type = (
         startswith(local.selected_machine_type, "c4-") ||
         startswith(local.selected_machine_type, "c3-") ||
         startswith(local.selected_machine_type, "c3d-")
@@ -486,8 +487,8 @@ resource "google_compute_instance" "mayascale_nodes" {
   # Primary NIC: Client traffic (NVMe-oF 4420)
   # Use gVNIC with Tier_1 networking (up to 75 Gbps for 30+ vCPU machines)
   network_interface {
-    network    = "default"
-    nic_type   = "GVNIC"  # Required for Tier_1 networking and jumbo frames
+    network  = "default"
+    nic_type = "GVNIC" # Required for Tier_1 networking and jumbo frames
 
     dynamic "access_config" {
       for_each = var.assign_public_ip ? [1] : []
@@ -515,7 +516,7 @@ resource "google_compute_instance" "mayascale_nodes" {
     network    = google_compute_network.mayascale_backend.id
     subnetwork = google_compute_subnetwork.mayascale_backend_subnet.id
     network_ip = local.backend_node_ips[count.index]
-    nic_type   = "GVNIC"  # Required for MTU 8896 jumbo frames support
+    nic_type   = "GVNIC" # Required for MTU 8896 jumbo frames support
     # No external IP for backend network
   }
 
@@ -532,10 +533,10 @@ resource "google_compute_instance" "mayascale_nodes" {
   dynamic "scheduling" {
     for_each = var.use_spot_vms || (local.active_policy.availability_strategy == "same-zone") ? [1] : []
     content {
-      preemptible        = var.use_spot_vms ? true : false
-      automatic_restart  = false  # Required: false for spot VMs AND collocated placement
-      on_host_maintenance = var.use_spot_vms ? "TERMINATE" : "MIGRATE"
-      provisioning_model = var.use_spot_vms ? "SPOT" : "STANDARD"
+      preemptible                 = var.use_spot_vms ? true : false
+      automatic_restart           = false # Required: false for spot VMs AND collocated placement
+      on_host_maintenance         = var.use_spot_vms ? "TERMINATE" : "MIGRATE"
+      provisioning_model          = var.use_spot_vms ? "SPOT" : "STANDARD"
       instance_termination_action = var.use_spot_vms ? "STOP" : null
     }
   }
@@ -550,43 +551,44 @@ resource "google_compute_instance" "mayascale_nodes" {
 
   # Metadata and startup script
   metadata = {
-    ssh-keys = var.ssh_public_key != "" ? "mayascale:${var.ssh_public_key}" : ""
-    cluster-name = var.cluster_name
+    ssh-keys                      = var.ssh_public_key != "" ? "mayascale:${var.ssh_public_key}" : ""
+    cluster-name                  = var.cluster_name
     mayascale-cloud_user_password = random_password.mayascale_password.result
   }
 
   # Only primary node (node1) gets startup script - secondary joins via heartbeat
   # This prevents startup script text from polluting node2 metadata (which causes IPaliases bugs)
   metadata_startup_script = count.index == 0 ? templatefile("${path.module}/startup-cluster.sh.tpl", {
-    cluster_name         = local.cluster_name
-    deployment_type      = var.deployment_type
-    node_role           = "node1"  # Always node1 since only primary gets script
-    vip_address         = local.vip_address
-    vip_address_2       = local.vip_address_2
-    vip_cidr_range      = local.vip_cidr_range
-    performance_policy  = var.performance_policy
-    peer_zone          = local.zone_strategy[1]  # Always secondary zone
+    cluster_name       = local.cluster_name
+    deployment_type    = var.deployment_type
+    node_role          = "node1" # Always node1 since only primary gets script
+    vip_address        = local.vip_address
+    vip_address_2      = local.vip_address_2
+    vip_cidr_range     = local.vip_cidr_range
+    performance_policy = var.performance_policy
+    peer_zone          = local.zone_strategy[1] # Always secondary zone
     resource_id        = random_integer.resource_id.result
     peer_resource_id   = random_integer.peer_resource_id.result
     nvme_count         = local.active_policy.local_ssd_count
     project_id         = var.project_id
-    zone               = local.zone_strategy[0]  # Always primary zone
+    zone               = local.zone_strategy[0] # Always primary zone
     primary_instance   = "${local.cluster_name}-node1"
     secondary_instance = "${local.cluster_name}-node2"
     node_count         = 2
     # Client export configuration
-    client_nvme_port     = var.client_nvme_port
-    client_iscsi_port    = var.client_iscsi_port
-    client_protocol      = var.client_protocol
+    client_nvme_port       = var.client_nvme_port
+    client_iscsi_port      = var.client_iscsi_port
+    client_protocol        = var.client_protocol
     client_exports_enabled = var.client_exports_enabled
+    ha_data                = var.ha_data ? 1 : 0
     # Share configuration
-    shares              = jsonencode(var.shares)
+    shares = jsonencode(var.shares)
     # Startup wait configuration
     mayascale_startup_wait = var.mayascale_startup_wait != null ? tostring(var.mayascale_startup_wait) : ""
-  }) : null  # No startup script for node2 (secondary)
+  }) : null # No startup script for node2 (secondary)
 
   labels = merge(local.deployment_labels, {
-    node-role = count.index == 0 ? "primary" : "secondary"
+    node-role  = count.index == 0 ? "primary" : "secondary"
     node-index = tostring(count.index + 1)
   })
 

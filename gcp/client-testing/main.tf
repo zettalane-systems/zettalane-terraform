@@ -20,6 +20,20 @@ data "google_compute_resource_policy" "placement_policy" {
   project = var.project_id
 }
 
+# Let the client pull the CSI image from Artifact Registry on k3s:
+# the default compute SA gets artifactregistry.reader, and the VM gets the
+# cloud-platform scope (below) so its metadata token can use AR. csi-client-setup.sh
+# fetches that token at deploy time -> k3s registries.yaml. (GKE auto-auths.)
+data "google_compute_default_service_account" "default" {
+  project = var.project_id
+}
+
+resource "google_project_iam_member" "client_ar_reader" {
+  project = var.project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${data.google_compute_default_service_account.default.email}"
+}
+
 # Calculate vCPU count for TIER_1 networking eligibility
 locals {
   # Extract vCPU count from machine type. Works for n2-highcpu-32,
@@ -45,7 +59,7 @@ resource "google_compute_instance" "client" {
       image = var.source_image
       size  = 50
       # C4, C4D, C3, C3D require hyperdisk-balanced (don't support pd-balanced)
-      type  = (
+      type = (
         startswith(var.machine_type, "c4-") ||
         startswith(var.machine_type, "c4d-") ||
         startswith(var.machine_type, "c3-") ||
@@ -56,7 +70,7 @@ resource "google_compute_instance" "client" {
 
   network_interface {
     network  = data.google_compute_network.default.id
-    nic_type = "GVNIC"  # Required for TIER_1 networking
+    nic_type = "GVNIC" # Required for TIER_1 networking
     access_config {
       network_tier = "PREMIUM"
     }
@@ -75,6 +89,13 @@ resource "google_compute_instance" "client" {
       ssh_public_key = var.ssh_public_key
       admin_username = var.admin_username
     })
+  }
+
+  # Default SA + cloud-platform scope so the metadata access-token can pull the
+  # CSI image from Artifact Registry (k3s registries.yaml; see csi-client-setup.sh).
+  service_account {
+    email  = data.google_compute_default_service_account.default.email
+    scopes = ["cloud-platform"]
   }
 
   # Spot instances

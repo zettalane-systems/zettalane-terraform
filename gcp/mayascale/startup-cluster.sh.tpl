@@ -164,6 +164,7 @@ cat > /opt/mayastor/config/.startup-config <<EOF
 
 # Cluster configuration
 export MAYASCALE_CLUSTER_NAME="${cluster_name}"
+export MAYASCALE_HA_DATA="${ha_data}"
 export MAYASCALE_NODE_ROLE="${node_role}"
 export MAYASCALE_DEPLOYMENT_TYPE="${deployment_type}"
 export MAYASCALE_CLOUD_PROVIDER="gcp"

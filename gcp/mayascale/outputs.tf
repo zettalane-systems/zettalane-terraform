@@ -181,19 +181,37 @@ output "performance_characteristics" {
   }
 }
 
-# Kubernetes CSI Integration
-output "kubernetes_csi_config" {
-  description = "Configuration for Kubernetes CSI driver integration"
+# CSI backend wiring (for the ZettaLane CSI driver, provisioner csi-mayascale.zettalane.com).
+# Feed straight into the driver config Secret / Helm values. Use with
+# deployment_type = "vg-active-active": the driver carves per-PVC LVs from the per-node
+# CSI VG and exports them as per-volume NVMe-oF subsystems (portalgroup=auto). Mirrors the
+# mayanas csi_backend shape so both products configure the driver identically.
+output "csi_backend" {
+  description = "Connection + pool map for the csi-mayascale driver (cluster VIP list named for the driver, pool -> {clusterid, vip}). Use with deployment_type = vg-active-active."
   value = {
-    storage_class_name = "${local.cluster_name}-mayascale"
-    csi_driver_name   = "mayascale.csi.storage.k8s.io"
-    nvmeof_endpoints  = [
-      "${google_compute_instance.mayascale_nodes[0].network_interface[0].network_ip}:4420",
-      "${google_compute_instance.mayascale_nodes[1].network_interface[0].network_ip}:4420"
-    ]
-    vip_endpoint = "${local.vip_address}:4420"
-    performance_class = local.active_policy.capacity_optimization
-    target_iops = local.active_policy.target_write_iops
+    # options.driver -- selects the product/instance (block backend, RWO).
+    driver = "mayascale"
+    # Control-plane VIP list (key named for the driver): control failover AND
+    # pool/clusterid/VIP discovery. MayaScale is always 2-node active-active.
+    mayascale = join(",", [local.vip_address, local.vip_address_2])
+
+    # CSI pools per node (created by cluster_mayascale.sh in vg-active-active mode): the
+    # thick VG <cluster>-vg-node{1,2} (driver carves V_FLEX LVs) AND a thin pool
+    # <cluster>-vgpool-node{1,2} inside it (driver carves thin LVs -> sizeless snapshots +
+    # native clones). Same clusterid/vip as the node's VG; the driver discovers each pool's
+    # kind (vg vs thinpool) and routes accordingly.
+    pools = {
+      "${local.cluster_name}-vg-node1"     = { clusterid = random_integer.resource_id.result, vip = local.vip_address }
+      "${local.cluster_name}-vg-node2"     = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
+      "${local.cluster_name}-vgpool-node1" = { clusterid = random_integer.resource_id.result, vip = local.vip_address }
+      "${local.cluster_name}-vgpool-node2" = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
+    }
+
+    # zone -> data VIP, for the driver's zone-aware topology (zone_cluster_map)
+    zone_cluster_map = {
+      (google_compute_instance.mayascale_nodes[0].zone) = local.vip_address
+      (google_compute_instance.mayascale_nodes[1].zone) = local.vip_address_2
+    }
   }
 }
 

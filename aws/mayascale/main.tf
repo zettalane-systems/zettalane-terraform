@@ -37,51 +37,51 @@ locals {
     # AWS i4i instance family (7th gen AWS Nitro SSD - validated performance)
     # Latency target: <1ms for zonal tiers
     "zonal-basic-performance" = {
-      target_write_iops     = 57000    # AWS spec: 27.5K × 2 (validated: 57K)
-      target_read_iops      = 200000   # AWS spec: 50K × 2 (validated: 204K, rounded to 200K)
-      target_write_latency  = 1000     # <1ms (Validated: 0.561ms optimal, 0.169ms QD1)
-      target_bandwidth_mbps = 1200     # Validated: 1,182 MB/s seq read, 546 MB/s seq write
+      target_write_iops     = 57000  # AWS spec: 27.5K × 2 (validated: 57K)
+      target_read_iops      = 200000 # AWS spec: 50K × 2 (validated: 204K, rounded to 200K)
+      target_write_latency  = 1000   # <1ms (Validated: 0.561ms optimal, 0.169ms QD1)
+      target_bandwidth_mbps = 1200   # Validated: 1,182 MB/s seq read, 546 MB/s seq write
       availability_strategy = "same-az"
       capacity_optimization = "cost"
-      instance_type        = "i4i.xlarge"  # AWS Nitro SSD, up to 10 Gbps network (1.875 baseline)
-      nvme_device_count    = 1
-      nvme_capacity_gb     = 937       # i4i.xlarge has 937GB NVMe
+      instance_type         = "i4i.xlarge" # AWS Nitro SSD, up to 10 Gbps network (1.875 baseline)
+      nvme_device_count     = 1
+      nvme_capacity_gb      = 937 # i4i.xlarge has 937GB NVMe
     }
 
     "zonal-standard-performance" = {
-      target_write_iops     = 135000   # AWS spec: 130K (validated: 135K)
-      target_read_iops      = 346000   # AWS spec: 170K × 2 (validated: 346K)
-      target_write_latency  = 1000     # <1ms
+      target_write_iops     = 135000 # AWS spec: 130K (validated: 135K)
+      target_read_iops      = 346000 # AWS spec: 170K × 2 (validated: 346K)
+      target_write_latency  = 1000   # <1ms
       target_bandwidth_mbps = 3000
       availability_strategy = "same-az"
       capacity_optimization = "cost"
-      instance_type        = "i3en.2xlarge"  # 8 vCPU, 2 x 2.5TB NVMe, up to 25 Gbps (8.4 baseline)
-      nvme_device_count    = 2         # 2 SSDs = 2 NVMe-oF volumes
-      nvme_capacity_gb     = 5000      # Total: 2 x 2.5TB = 5TB
+      instance_type         = "i3en.2xlarge" # 8 vCPU, 2 x 2.5TB NVMe, up to 25 Gbps (8.4 baseline)
+      nvme_device_count     = 2              # 2 SSDs = 2 NVMe-oF volumes
+      nvme_capacity_gb      = 5000           # Total: 2 x 2.5TB = 5TB
     }
 
     "zonal-high-performance" = {
-      target_write_iops     = 400000   # AWS spec: 400K (after initialization)
-      target_read_iops      = 992000   # AWS spec: 500K × ~2.0 (validated: 992K)
-      target_write_latency  = 1000     # <1ms (150µs target)
+      target_write_iops     = 400000 # AWS spec: 400K (after initialization)
+      target_read_iops      = 992000 # AWS spec: 500K × ~2.0 (validated: 992K)
+      target_write_latency  = 1000   # <1ms (150µs target)
       target_bandwidth_mbps = 8000
       availability_strategy = "same-az"
       capacity_optimization = "balanced"
-      instance_type        = "i3en.6xlarge"  # 24 vCPU, 2 x 7.5TB NVMe, 25 Gbps sustained
-      nvme_device_count    = 2         # 2 SSDs = 2 NVMe-oF volumes (Active-Active)
-      nvme_capacity_gb     = 15000     # Total: 2 x 7.5TB = 15TB
+      instance_type         = "i3en.6xlarge" # 24 vCPU, 2 x 7.5TB NVMe, 25 Gbps sustained
+      nvme_device_count     = 2              # 2 SSDs = 2 NVMe-oF volumes (Active-Active)
+      nvme_capacity_gb      = 15000          # Total: 2 x 7.5TB = 15TB
     }
 
     "zonal-ultra-performance" = {
-      target_write_iops     = 528000   # Validated: 528K (Nov 1, 2025) - AWS i3en NVMe limited
-      target_read_iops      = 1350000  # Validated: 1.35M (Nov 1, 2025)
-      target_write_latency  = 1000     # <1ms (250-600µs typical)
-      target_bandwidth_mbps = 8240     # 2.06 GB/s write + 5.27 GB/s read
+      target_write_iops     = 528000  # Validated: 528K (Nov 1, 2025) - AWS i3en NVMe limited
+      target_read_iops      = 1350000 # Validated: 1.35M (Nov 1, 2025)
+      target_write_latency  = 1000    # <1ms (250-600µs typical)
+      target_bandwidth_mbps = 8240    # 2.06 GB/s write + 5.27 GB/s read
       availability_strategy = "same-az"
       capacity_optimization = "performance"
-      instance_type        = "i3en.12xlarge"  # 48 vCPU, 4 x 7.5TB NVMe, 50 Gbps sustained
-      nvme_device_count    = 4         # 4 SSDs = 4 NVMe-oF volumes (Active-Active)
-      nvme_capacity_gb     = 30000     # Total: 4 x 7.5TB = 30TB
+      instance_type         = "i3en.12xlarge" # 48 vCPU, 4 x 7.5TB NVMe, 50 Gbps sustained
+      nvme_device_count     = 4               # 4 SSDs = 4 NVMe-oF volumes (Active-Active)
+      nvme_capacity_gb      = 30000           # Total: 4 x 7.5TB = 30TB
       # Note: 800K target impossible - raw NVMe only delivers 635K (79% of AWS spec)
       # Bottleneck: AWS i3en NVMe queue depth sensitivity, NOT network or CPU
     }
@@ -91,51 +91,51 @@ locals {
     # Read IOPS: Same as zonal (client reads from same-AZ node)
     # Latency target: <2ms for regional tiers (cross-AZ sync adds ~700µs)
     "regional-basic-performance" = {
-      target_write_iops     = 50000    # 57K × 0.90 = 51K (rounded to 50K for marketing)
-      target_read_iops      = 200000   # 204K (rounded to 200K for marketing)
-      target_write_latency  = 2000     # <2ms (cross-AZ sync adds ~700µs vs zonal <1ms)
-      target_bandwidth_mbps = 1200     # Same as zonal
+      target_write_iops     = 50000  # 57K × 0.90 = 51K (rounded to 50K for marketing)
+      target_read_iops      = 200000 # 204K (rounded to 200K for marketing)
+      target_write_latency  = 2000   # <2ms (cross-AZ sync adds ~700µs vs zonal <1ms)
+      target_bandwidth_mbps = 1200   # Same as zonal
       availability_strategy = "cross-az"
       capacity_optimization = "cost"
-      instance_type        = "i4i.xlarge"  # AWS Nitro SSD, up to 10 Gbps (1.875 baseline)
-      nvme_device_count    = 1
-      nvme_capacity_gb     = 937
+      instance_type         = "i4i.xlarge" # AWS Nitro SSD, up to 10 Gbps (1.875 baseline)
+      nvme_device_count     = 1
+      nvme_capacity_gb      = 937
     }
 
     "regional-standard-performance" = {
-      target_write_iops     = 120000   # 135K × 0.90 = 122K (rounded to 120K for marketing)
-      target_read_iops      = 350000   # 346K (rounded to 350K for marketing)
-      target_write_latency  = 2000     # <2ms (cross-AZ sync adds ~700µs vs zonal <1ms)
+      target_write_iops     = 120000 # 135K × 0.90 = 122K (rounded to 120K for marketing)
+      target_read_iops      = 350000 # 346K (rounded to 350K for marketing)
+      target_write_latency  = 2000   # <2ms (cross-AZ sync adds ~700µs vs zonal <1ms)
       target_bandwidth_mbps = 3000
       availability_strategy = "cross-az"
       capacity_optimization = "cost"
-      instance_type        = "i3en.2xlarge"  # 8 vCPU, 2 x 2.5TB NVMe, up to 25 Gbps (8.4 baseline)
-      nvme_device_count    = 2         # 2 SSDs = 2 NVMe-oF volumes
-      nvme_capacity_gb     = 5000      # Total: 2 x 2.5TB = 5TB
+      instance_type         = "i3en.2xlarge" # 8 vCPU, 2 x 2.5TB NVMe, up to 25 Gbps (8.4 baseline)
+      nvme_device_count     = 2              # 2 SSDs = 2 NVMe-oF volumes
+      nvme_capacity_gb      = 5000           # Total: 2 x 2.5TB = 5TB
     }
 
     "regional-high-performance" = {
-      target_write_iops     = 330000   # 368K × 0.90 = 331K (rounded to 330K for marketing)
-      target_read_iops      = 1000000  # 992K (rounded to 1M for marketing)
-      target_write_latency  = 2000     # <2ms (cross-AZ sync adds ~700µs)
+      target_write_iops     = 330000  # 368K × 0.90 = 331K (rounded to 330K for marketing)
+      target_read_iops      = 1000000 # 992K (rounded to 1M for marketing)
+      target_write_latency  = 2000    # <2ms (cross-AZ sync adds ~700µs)
       target_bandwidth_mbps = 8000
       availability_strategy = "cross-az"
       capacity_optimization = "balanced"
-      instance_type        = "i3en.6xlarge"  # 24 vCPU, 2 x 7.5TB NVMe, 25 Gbps sustained
-      nvme_device_count    = 2         # 2 SSDs = 2 NVMe-oF volumes (Active-Active)
-      nvme_capacity_gb     = 15000     # Total: 2 x 7.5TB = 15TB
+      instance_type         = "i3en.6xlarge" # 24 vCPU, 2 x 7.5TB NVMe, 25 Gbps sustained
+      nvme_device_count     = 2              # 2 SSDs = 2 NVMe-oF volumes (Active-Active)
+      nvme_capacity_gb      = 15000          # Total: 2 x 7.5TB = 15TB
     }
 
     "regional-ultra-performance" = {
-      target_write_iops     = 475000   # 528K × 0.90 (cross-AZ RAID1 sync overhead) - Validated
-      target_read_iops      = 1350000  # Same as zonal (client reads from same-AZ Node1) - Validated
-      target_write_latency  = 2000     # <2ms (cross-AZ sync adds ~700µs)
-      target_bandwidth_mbps = 8240     # Same as zonal
+      target_write_iops     = 475000  # 528K × 0.90 (cross-AZ RAID1 sync overhead) - Validated
+      target_read_iops      = 1350000 # Same as zonal (client reads from same-AZ Node1) - Validated
+      target_write_latency  = 2000    # <2ms (cross-AZ sync adds ~700µs)
+      target_bandwidth_mbps = 8240    # Same as zonal
       availability_strategy = "cross-az"
       capacity_optimization = "performance"
-      instance_type        = "i3en.12xlarge"  # 48 vCPU, 4 x 7.5TB NVMe, 50 Gbps sustained
-      nvme_device_count    = 4         # 4 SSDs = 4 NVMe-oF volumes (Active-Active)
-      nvme_capacity_gb     = 30000     # Total: 4 x 7.5TB = 30TB
+      instance_type         = "i3en.12xlarge" # 48 vCPU, 4 x 7.5TB NVMe, 50 Gbps sustained
+      nvme_device_count     = 4               # 4 SSDs = 4 NVMe-oF volumes (Active-Active)
+      nvme_capacity_gb      = 30000           # Total: 4 x 7.5TB = 30TB
       # Note: Based on validated 528K zonal performance (Nov 1, 2025)
     }
   }
@@ -145,11 +145,11 @@ locals {
 
   # vCPU mapping for AWS instance types
   vcpu_map = {
-    "i4i.xlarge"      = 4
-    "i3.large"        = 2
-    "i3en.2xlarge"    = 8
-    "i3en.6xlarge"    = 24
-    "i3en.12xlarge"   = 48
+    "i4i.xlarge"    = 4
+    "i3.large"      = 2
+    "i3en.2xlarge"  = 8
+    "i3en.6xlarge"  = 24
+    "i3en.12xlarge" = 48
   }
 
   # Cluster naming
@@ -171,29 +171,31 @@ locals {
 
   node2_az = length(local.available_secondary_azs) > 0 ? local.available_secondary_azs[0] : local.node1_az
 
-  # VIP calculation (auto-calculate from subnet CIDR with random offsets)
-  # Use random offsets to avoid VIP conflicts between multiple HA pairs
-  # Random value derived from random_id.suffix (4 bytes = up to 4 billion)
+  # VIP calculation (auto-calculate from subnet CIDR).
+  # cluster_slot > 0: deterministic 2-contiguous-slot VIPs per pair (matches GCP/Azure), offset by
+  #   50 to skip AWS-reserved low IPs -> pairs sharing the default VPC subnet never collide.
+  # cluster_slot = 0: random offsets (standalone fallback, original behavior).
+  # The backend lives in its own per-cluster VPC (aws_vpc.backend), so cluster_slot affects ONLY the VIP.
   full_random_value = tonumber(format("%d", random_id.suffix.dec))
-  vip_offset1 = (local.full_random_value % 200) + 50       # Range: 50-249 (avoid low IPs used by AWS)
-  vip_offset2 = floor(local.full_random_value / 256) % 200 + 50
-  vip_address   = cidrhost(data.aws_subnet.primary.cidr_block, local.vip_offset1)
-  vip_address_2 = cidrhost(data.aws_subnet.primary.cidr_block, local.vip_offset2)
+  vip_offset1       = var.cluster_slot > 0 ? (50 + var.cluster_slot * 2) : ((local.full_random_value % 200) + 50) # Range: 50-249 (avoid low IPs used by AWS)
+  vip_offset2       = var.cluster_slot > 0 ? (50 + var.cluster_slot * 2 + 1) : (floor(local.full_random_value / 256) % 200 + 50)
+  vip_address       = cidrhost(data.aws_subnet.primary.cidr_block, local.vip_offset1)
+  vip_address_2     = cidrhost(data.aws_subnet.primary.cidr_block, local.vip_offset2)
 
   # Backend network IPs for replication traffic
   # Zonal: 10.200.0.10 and 10.200.0.11 in /24
   # Regional: 10.200.0.10 in /25 subnet1, 10.200.0.138 in /25 subnet2
-  backend_node1_ip = cidrhost("10.200.0.0/24", 10)  # 10.200.0.10 (works for both /24 and /25)
-  backend_node2_ip = local.selected_policy.availability_strategy == "same-az" ? cidrhost("10.200.0.0/24", 11) : cidrhost("10.200.0.128/25", 10)  # 10.200.0.11 (zonal) or 10.200.0.138 (regional)
+  backend_node1_ip = cidrhost("10.200.0.0/24", 10)                                                                                              # 10.200.0.10 (works for both /24 and /25)
+  backend_node2_ip = local.selected_policy.availability_strategy == "same-az" ? cidrhost("10.200.0.0/24", 11) : cidrhost("10.200.0.128/25", 10) # 10.200.0.11 (zonal) or 10.200.0.138 (regional)
 
   # Tags
   common_tags = {
-    Application        = "mayascale"
-    ManagedBy         = "terraform"
-    DeploymentName    = local.cluster_name
-    PerformancePolicy = var.performance_policy
+    Application          = "mayascale"
+    ManagedBy            = "terraform"
+    DeploymentName       = local.cluster_name
+    PerformancePolicy    = var.performance_policy
     AvailabilityStrategy = local.selected_policy.availability_strategy
-    CostTier          = local.selected_policy.capacity_optimization
+    CostTier             = local.selected_policy.capacity_optimization
   }
 }
 
@@ -216,13 +218,13 @@ data "aws_subnets" "default" {
 # Get primary subnet (in node1 AZ)
 data "aws_subnet" "primary" {
   id = element([for s in data.aws_subnets.default.ids : s
-    if data.aws_subnet.by_id[s].availability_zone == local.node1_az], 0)
+  if data.aws_subnet.by_id[s].availability_zone == local.node1_az], 0)
 }
 
 # Get secondary subnet (in node2 AZ for cross-AZ, same as primary for same-AZ)
 data "aws_subnet" "secondary" {
   id = element([for s in data.aws_subnets.default.ids : s
-    if data.aws_subnet.by_id[s].availability_zone == local.node2_az], 0)
+  if data.aws_subnet.by_id[s].availability_zone == local.node2_az], 0)
 }
 
 data "aws_subnet" "by_id" {
@@ -364,10 +366,10 @@ resource "aws_security_group" "mayascale_sg" {
 
   # Internal cluster communication (between nodes in same security group)
   ingress {
-    from_port = 0
-    to_port   = 65535
-    protocol  = "tcp"
-    self      = true
+    from_port   = 0
+    to_port     = 65535
+    protocol    = "tcp"
+    self        = true
     description = "Internal cluster communication"
   }
 
@@ -530,32 +532,33 @@ resource "aws_network_interface" "node2_backend" {
 # Startup script for Node1 (defined in locals to avoid circular dependency)
 locals {
   startup_script_node1 = templatefile("${path.module}/startup-cluster.sh.tpl", {
-    cluster_name           = local.cluster_name
-    deployment_type        = var.deployment_type
-    node_role              = "node1"
-    vip_address            = local.vip_address
-    vip_address_2          = local.vip_address_2
-    performance_policy     = var.performance_policy
-    peer_zone              = local.node2_az
-    resource_id            = random_integer.resource_id.result
-    peer_resource_id       = random_integer.peer_resource_id.result
-    nvme_count             = local.selected_policy.nvme_device_count
+    cluster_name       = local.cluster_name
+    deployment_type    = var.deployment_type
+    node_role          = "node1"
+    vip_address        = local.vip_address
+    vip_address_2      = local.vip_address_2
+    performance_policy = var.performance_policy
+    peer_zone          = local.node2_az
+    resource_id        = random_integer.resource_id.result
+    peer_resource_id   = random_integer.peer_resource_id.result
+    nvme_count         = local.selected_policy.nvme_device_count
     # Secondary instance IPs (Terraform will create node2 first due to this dependency)
-    secondary_private_ip   = aws_instance.mayascale_node2.private_ip
-    secondary_backend_ip   = local.backend_node2_ip
-    secondary_instance_id  = aws_instance.mayascale_node2.id
-    secondary_hostname     = aws_instance.mayascale_node2.private_dns
+    secondary_private_ip  = aws_instance.mayascale_node2.private_ip
+    secondary_backend_ip  = local.backend_node2_ip
+    secondary_instance_id = aws_instance.mayascale_node2.id
+    secondary_hostname    = aws_instance.mayascale_node2.private_dns
     # Primary backend IP (passed directly like CloudFormation - no circular dependency)
-    primary_backend_ip     = local.backend_node1_ip
+    primary_backend_ip = local.backend_node1_ip
     # Backend network configuration for cross-AZ
-    is_cross_az            = local.selected_policy.availability_strategy == "cross-az"
+    is_cross_az = local.selected_policy.availability_strategy == "cross-az"
     # Client export configuration
     client_nvme_port       = var.client_nvme_port
     client_iscsi_port      = var.client_iscsi_port
     client_protocol        = var.client_protocol
     client_exports_enabled = var.client_exports_enabled
+    ha_data                = var.ha_data ? 1 : 0
     # Share configuration
-    shares                = jsonencode(var.shares)
+    shares = jsonencode(var.shares)
     # Startup wait configuration
     mayascale_startup_wait = var.mayascale_startup_wait != null ? tostring(var.mayascale_startup_wait) : ""
   })
@@ -676,7 +679,7 @@ resource "aws_instance" "mayascale_node1" {
 
   depends_on = [
     aws_iam_role_policy.mayascale_ec2_policy,
-    aws_instance.mayascale_node2  # Explicit dependency - node2 must exist first
+    aws_instance.mayascale_node2 # Explicit dependency - node2 must exist first
   ]
 }
 

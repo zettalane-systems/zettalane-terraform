@@ -105,6 +105,7 @@ MayaScale provides ultra-high-performance distributed block storage with:
 | vip2_address | Virtual IP 2 for client access |
 | ssh_command_node1 | SSH command to connect |
 | deployment_summary | Human-readable summary |
+| csi_backend | Driver config + pool map for the ZettaLane CSI driver (set `deployment_type = vg-active-active`) |
 
 ## Client Connection
 
@@ -124,6 +125,41 @@ sudo nvme connect-all -t tcp -a $VIP1 -s 4420
 # List connected NVMe devices
 sudo nvme list
 ```
+
+## Kubernetes (CSI driver)
+
+To provision MayaScale block volumes from Kubernetes (EKS) via the ZettaLane CSI
+driver (`provisioner: csi-mayascale.zettalane.com`), deploy with
+`deployment_type = "vg-active-active"`. The cluster then builds a per-node CSI
+volume group + thin pool instead of the default `data-node-X` block auto-export,
+and the driver carves a per-PVC LV + per-volume NVMe-oF subsystem on demand.
+
+```hcl
+deployment_type = "vg-active-active"
+```
+
+Wire the `csi_backend` output straight into the driver's Helm values / config Secret:
+
+```bash
+terraform output -json csi_backend \
+  | jq '{driver:.driver, mayascale:.mayascale, pools:.pools}' > values-backend.yaml
+helm upgrade --install csi-mayascale ./charts/zettalane-csi -f values-backend.yaml
+```
+
+A block StorageClass then references a discovered pool:
+
+```yaml
+provisioner: csi-mayascale.zettalane.com
+parameters:
+  protocol: nvme-of
+  pool: <cluster>-vg-node1      # from csi_backend.pools
+```
+
+**Networking:** run EKS in the **same VPC** (or a peered VPC) as the cluster. The
+module's security group already admits all in-VPC traffic, so the CSI controller
+reaches rpcbind + configd (control) and worker nodes reach the per-PVC NVMe-oF
+portal (data) with no extra rule. For a cross-VPC/peered cluster, add the EKS
+node security group to the MayaScale SG ingress.
 
 ## Cost Estimation
 

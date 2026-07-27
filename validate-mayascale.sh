@@ -24,6 +24,21 @@ success()  { echo -e "${GREEN}[$(date '+%H:%M:%S')]${NC} $1"; }
 warn()     { echo -e "${YELLOW}[$(date '+%H:%M:%S')]${NC} $1"; }
 fail()     { echo -e "${RED}[$(date '+%H:%M:%S')]${NC} $1"; }
 
+# The client-testing dir is shared across deploys; a tfstate left from a different
+# RG makes terraform refresh a prior cluster's resources. If state has managed
+# resources but none in the target RG, move it aside (back up, don't delete).
+client_state_guard() {
+    local st="$1/terraform.tfstate" rg="$2"
+    [ -f "$st" ] || return 0
+    if grep -q '/resourceGroups/' "$st" 2>/dev/null && \
+       ! grep -qi "/resourceGroups/${rg}/" "$st" 2>/dev/null; then
+        local bak="${st}.stale.$(date +%Y%m%d_%H%M%S)"
+        warn "Stale client state (no resources in RG '$rg') -> moving aside: $bak"
+        mv "$st" "$bak"
+        [ -f "${st}.backup" ] && mv "${st}.backup" "${bak}.backup"
+    fi
+}
+
 # Azure-aware terraform apply with automatic retry for transient API errors
 terraform_apply_with_retry() {
     local log_file="$1"
@@ -84,6 +99,13 @@ SSH_PUBLIC_KEY=""
 DESTROY_MODE="false"
 USE_SPOT="false"
 ASSIGN_PUBLIC_IP="true"
+BUCKET_COUNT="0"   # -b: object buckets per node for the objbacker cold tier (0 = none, azure only)
+FSX_MODE="false"   # --fsx [zfs]: ZFS mirror mode (FSx for OpenZFS equivalent)
+VG_MODE="false"    # --fsx vg: LVM VG on MD-RAID for Kubernetes CSI (vg-active-active)
+CSI_MODE="false"   # --csi [mayanas|mayascale]: stage CSI (csi_backend.json + scripts) regardless of fsx substrate
+CSI_DRIVER="mayascale"  # CSI product when --csi: mayascale=block/zvol, mayanas=file/NFS
+ENABLE_COLOCATION="false" # --colocation: opt-in compact placement group (zonal only); OFF by default (functional tests need no rack locality + avoids placement-policy lifecycle friction)
+CLUSTER_SLOT="0"   # --cluster-slot N: deterministic VIP partition (+ Azure backend subnet) for multi-pair in one shared VNet/VPC; 0=standalone (random VIP). All clouds: VIP. Azure also: backend /24.
 
 # Performance policy to machine type mapping
 # GCP: n2-highcpu instances with local SSDs
@@ -222,6 +244,8 @@ AZURE OPTIONS:
 
 COMMON OPTIONS:
     -n, --name NAME           Deployment name (default: demo)
+    -b, --bucket-count COUNT  Object buckets per node for the objbacker cold tier
+			      (default: 0 = no cold tier, max: 4)
     -o, --policy POLICY       Performance policy (default: zonal-standard-performance)
     -m, --machine-type TYPE   Override storage machine type (cloud-specific)
     --client-machine-type TYPE  Override client machine type (cloud-specific)
@@ -230,12 +254,30 @@ COMMON OPTIONS:
                               from file content; for private keys the public
                               half is derived in-memory via ssh-keygen.
     --spot                    Use spot/preemptible instances (default: on-demand)
+    --fsx [zfs|vg]            Storage architecture (default = MD-RAID block, active-active):
+                              zfs (or bare --fsx) = ZFS mirror (FSx for OpenZFS equivalent);
+                              vg = LVM VG on MD-RAID for Kubernetes CSI (vg-active-active, GCP)
     --no-public-ip            Deploy storage nodes with no public IPs.
                               Auto-enables Private Google Access on the
                               subnet (GCP) and IAP tunnel for SSH.
                               (default: public IPs ON for direct SSH)
     --skip-deploy             Skip terraform apply, validate existing deployment
-    --skip-client             Skip client deployment, storage-only validation
+    --skip-client             Skip client deployment, storage-only validation.
+                              With -d/--destroy: preserve the client VM (and its
+                              state) while destroying storage -- reuse it across a
+                              storage redeploy.
+    --csi [mayanas|mayascale] Stage CSI inputs (csi_backend.json + test scripts) to the
+                              client and skip the legacy connect+fio test. Product:
+                              mayascale=block/zvol (default), mayanas=file/NFS. If no
+                              --fsx is given, the substrate is auto-selected to one the
+                              driver can provision: mayascale -> vg (vg-active-active),
+                              mayanas -> zfs (zfs-active-active). An explicit --fsx zfs|vg
+                              overrides (e.g. --fsx zfs for block zvols on a zpool); add
+                              --skip-deploy to stage onto a live cluster.
+    --colocation              Opt in to a compact placement group (nodes+client co-located;
+                              zonal policies only). OFF by default -- functional tests need
+                              no rack locality, and skipping it avoids the placement-policy
+                              destroy-in-use / re-create-409 friction.
     -d, --destroy             Destroy all resources and exit
     -h, --help                Show this help
 
@@ -295,6 +337,10 @@ while [[ $# -gt 0 ]]; do
             DEPLOYMENT_NAME="$2"
             shift 2
             ;;
+        --bucket-count|-b)
+            BUCKET_COUNT="$2"
+            shift 2
+            ;;
         --policy|-o)
             POLICY="$2"
             shift 2
@@ -327,9 +373,34 @@ while [[ $# -gt 0 ]]; do
             SKIP_CLIENT="true"
             shift
             ;;
+        --csi)
+            CSI_MODE="true"
+            case "${2:-}" in
+                mayanas|mayascale) CSI_DRIVER="$2"; shift 2 ;;
+                ""|-*)             shift ;;   # no product arg -> default CSI_DRIVER
+                *) echo "ERROR: --csi takes 'mayanas' or 'mayascale' (got '$2')"; usage ;;
+            esac
+            ;;
+        --colocation)
+            ENABLE_COLOCATION="true"   # opt-in compact placement group (zonal only)
+            shift
+            ;;
         -d|--destroy)
             DESTROY_MODE="true"
             shift
+            ;;
+        --fsx)
+            # Optional mode arg: "vg" -> LVM VG on MD-RAID for Kubernetes CSI (vg-active-active,
+            # GCP); "zfs" or bare --fsx -> ZFS mirror (FSx for OpenZFS equivalent).
+            case "${2:-}" in
+                vg)  VG_MODE="true";  shift 2 ;;
+                zfs) FSX_MODE="true"; shift 2 ;;
+                ""|--*) FSX_MODE="true"; shift ;;
+                *) fail "--fsx takes 'zfs' or 'vg' (got '$2')"; usage ;;
+            esac
+            ;;
+        --cluster-slot)
+            CLUSTER_SLOT="$2"; shift 2
             ;;
         -h|--help)
             usage
@@ -345,6 +416,32 @@ done
 if [ -z "$CLOUD" ]; then
     fail "Missing required argument: --cloud"
     usage
+fi
+
+if [[ ! "$BUCKET_COUNT" =~ ^[0-4]$ ]]; then
+    fail "--bucket-count must be between 0 and 4 (0 = no object cold tier)"
+fi
+
+# The objbacker cold tier is azure-only for now: gcp/aws mayascale provision no
+# buckets, so a non-zero count there would silently do nothing.
+if [ "$BUCKET_COUNT" -gt 0 ] && [ "$CLOUD" != "azure" ]; then
+    fail "--bucket-count is only supported on azure (got: $CLOUD)"
+fi
+
+# CSI needs a provisionable substrate. The default (active-active = MD-RAID block whose
+# auto-exported data-node-X are V_RG) exposes NO pool the CSI driver can carve from, so
+# --csi without an explicit --fsx would deploy a cluster the driver can't provision against.
+# Auto-select the substrate that matches the CSI product: mayascale (block) -> vg-active-active
+# (per-node CSI VGs the driver carves LVs from); mayanas (file/NFS) -> zfs-active-active
+# (zpool NFS exports). An explicit --fsx zfs|vg is always honored as-is.
+if [ "$CSI_MODE" = "true" ] && [ "$VG_MODE" != "true" ] && [ "$FSX_MODE" != "true" ]; then
+    if [ "$CSI_DRIVER" = "mayascale" ]; then
+        VG_MODE="true"
+        warn "--csi $CSI_DRIVER without --fsx: defaulting substrate to vg-active-active (LVM VG for block CSI). Pass --fsx zfs to override (block zvols on a ZFS pool)."
+    else
+        FSX_MODE="true"
+        warn "--csi $CSI_DRIVER without --fsx: defaulting substrate to zfs-active-active (ZFS pool for file/NFS CSI)."
+    fi
 fi
 
 # Validate policy
@@ -582,13 +679,16 @@ if [ "$DESTROY_MODE" = "true" ]; then
     echo "========================================"
     echo ""
 
-    # Destroy client first
+    # Destroy client first -- unless --skip-client, which preserves the client VM
+    # (and its tfstate) so it can be reused across a storage redeploy.
     CLIENT_DIR="$SCRIPT_DIR/$CLOUD/client-testing"
     CLIENT_DESTROY_OK=false
-    if [ -d "$CLIENT_DIR" ] && [ -f "$CLIENT_DIR/terraform.tfstate" ]; then
+    if [ "$SKIP_CLIENT" = "true" ]; then
+        log "Skipping client destroy (--skip-client) - keeping client VM and its state"
+    elif [ -d "$CLIENT_DIR" ] && [ -f "$CLIENT_DIR/terraform.tfstate" ]; then
         log "Destroying client (log: $RESULTS_DIR/client_destroy.log)..."
         cd "$CLIENT_DIR"
-        if terraform destroy -auto-approve > "$RESULTS_DIR/client_destroy.log" 2>&1; then
+        if terraform destroy -auto-approve -input=false > "$RESULTS_DIR/client_destroy.log" 2>&1; then
             CLIENT_DESTROY_OK=true
             rm -f terraform.tfstate terraform.tfstate.backup terraform.tfvars
             success "Client destroyed and state cleaned"
@@ -602,7 +702,40 @@ if [ "$DESTROY_MODE" = "true" ]; then
     STORAGE_DESTROY_OK=false
     if [ -f "terraform.tfstate" ]; then
         log "Destroying storage (log: $RESULTS_DIR/storage_destroy.log)..."
-        if terraform destroy -auto-approve > "$RESULTS_DIR/storage_destroy.log" 2>&1; then
+        # If terraform.tfvars is gone, a bare destroy prompts for the no-default
+        # required vars (subscription_id, cluster_name) and fails (stdin redirected).
+        # Source subscription_id from the STATE being destroyed -- authoritative,
+        # it's in every resource id -- and pass a placeholder cluster_name (its value
+        # is cosmetic on destroy; resources are matched by state id, not by name).
+        # (The empty-ssh_public_key validation that also blocked this is handled by
+        # the non-empty placeholder fallback in azure/mayascale main.tf.)
+        STORAGE_DESTROY_VARS=()
+        if [ ! -f terraform.tfvars ] && [ "$CLOUD" = "azure" ]; then
+            SUB_FROM_STATE=$(grep -oE '/subscriptions/[0-9a-fA-F-]{36}' terraform.tfstate 2>/dev/null | head -1 | grep -oE '[0-9a-fA-F-]{36}')
+            SUB_FROM_STATE="${SUB_FROM_STATE:-${PROJECT_ID:-$(az account show --query id -o tsv 2>/dev/null || echo "")}}"
+            STORAGE_DESTROY_VARS=(-var "subscription_id=$SUB_FROM_STATE" -var "cluster_name=destroy")
+            warn "terraform.tfvars missing - destroying off state (subscription_id=$SUB_FROM_STATE from tfstate)"
+        fi
+        # --skip-client keeps the client VM, which SHARES the PPG + frontend
+        # vnet/subnet that this storage deployment created and owns in state.
+        # Drop those three from state before destroy so terraform leaves them
+        # for the client instead of failing on them (PPG 409 "still contains
+        # VMs" / subnet 400 "in use by <cluster>-client-nic"). They remain in
+        # Azure; the next deploy's use-existing guards (ppg_exists / vnet_exists
+        # / subnet_exists) re-adopt them. The backend subnet is storage-only and
+        # is intentionally left to be destroyed. No-op if this deployment reused
+        # pre-existing shared resources (count=0, not in state).
+        if [ "$SKIP_CLIENT" = "true" ] && [ "$CLOUD" = "azure" ]; then
+            for addr in \
+                'azurerm_proximity_placement_group.mayascale[0]' \
+                'azurerm_subnet.mayascale[0]' \
+                'azurerm_virtual_network.mayascale[0]'; do
+                if terraform state rm "$addr" >/dev/null 2>&1; then
+                    log "Preserving shared $addr for client (--skip-client)"
+                fi
+            done
+        fi
+        if terraform destroy -auto-approve -input=false "${STORAGE_DESTROY_VARS[@]}" > "$RESULTS_DIR/storage_destroy.log" 2>&1; then
             STORAGE_DESTROY_OK=true
             rm -f terraform.tfstate terraform.tfstate.backup terraform.tfvars
             success "Storage destroyed and state cleaned"
@@ -619,28 +752,58 @@ if [ "$DESTROY_MODE" = "true" ]; then
         log "Checking for orphaned resources..."
         case "$CLOUD" in
             gcp)
+                # When --skip-client, exclude client-named resources from the orphan
+                # sweep so the preserved client VM (and its SA/firewall) survive. Storage
+                # + backend resources (nodes, backend net/subnet) are NOT client-named, so
+                # they still get swept. (The client lives on the default VPC, never a
+                # ${DEPLOYMENT_NAME}-named subnet, so deleting backend net/subnet is safe.)
+                CLIENT_EXCL=""; CLIENT_EXCL_SA=""
+                if [ "$SKIP_CLIENT" = "true" ]; then
+                    CLIENT_EXCL=" AND NOT name~client"
+                    CLIENT_EXCL_SA=" AND NOT email~client"
+                    log "Preserving client-named resources in orphan sweep (--skip-client)"
+                fi
                 # Delete any leftover resources with deployment prefix
                 for type in instances firewall-rules; do
-                    gcloud compute $type list --filter="name~^${DEPLOYMENT_NAME}" --format="value(name)" --project="$PROJECT_ID" 2>/dev/null | while read -r name; do
+                    gcloud compute $type list --filter="name~^${DEPLOYMENT_NAME}${CLIENT_EXCL}" --format="value(name)" --project="$PROJECT_ID" 2>/dev/null | while read -r name; do
                         [ -n "$name" ] && log "Deleting orphaned $type: $name" && gcloud compute $type delete "$name" --project="$PROJECT_ID" --quiet 2>/dev/null || true
                     done
                 done
                 # Subnets need region
-                gcloud compute networks subnets list --filter="name~^${DEPLOYMENT_NAME}" --format="value(name,region)" --project="$PROJECT_ID" 2>/dev/null | while read -r name region; do
+                gcloud compute networks subnets list --filter="name~^${DEPLOYMENT_NAME}${CLIENT_EXCL}" --format="value(name,region)" --project="$PROJECT_ID" 2>/dev/null | while read -r name region; do
                     [ -n "$name" ] && log "Deleting orphaned subnet: $name" && gcloud compute networks subnets delete "$name" --region="$region" --project="$PROJECT_ID" --quiet 2>/dev/null || true
                 done
                 # Networks
-                gcloud compute networks list --filter="name~^${DEPLOYMENT_NAME}" --format="value(name)" --project="$PROJECT_ID" 2>/dev/null | while read -r name; do
+                gcloud compute networks list --filter="name~^${DEPLOYMENT_NAME}${CLIENT_EXCL}" --format="value(name)" --project="$PROJECT_ID" 2>/dev/null | while read -r name; do
                     [ -n "$name" ] && log "Deleting orphaned network: $name" && gcloud compute networks delete "$name" --project="$PROJECT_ID" --quiet 2>/dev/null || true
                 done
                 # Placement policies need region
-                gcloud compute resource-policies list --filter="name~^${DEPLOYMENT_NAME}" --format="value(name,region)" --project="$PROJECT_ID" 2>/dev/null | while read -r name region; do
+                gcloud compute resource-policies list --filter="name~^${DEPLOYMENT_NAME}${CLIENT_EXCL}" --format="value(name,region)" --project="$PROJECT_ID" 2>/dev/null | while read -r name region; do
                     [ -n "$name" ] && log "Deleting orphaned policy: $name" && gcloud compute resource-policies delete "$name" --region="$region" --project="$PROJECT_ID" --quiet 2>/dev/null || true
                 done
                 # Service accounts
-                gcloud iam service-accounts list --filter="email~^${DEPLOYMENT_NAME}" --format="value(email)" --project="$PROJECT_ID" 2>/dev/null | while read -r email; do
+                gcloud iam service-accounts list --filter="email~^${DEPLOYMENT_NAME}${CLIENT_EXCL_SA}" --format="value(email)" --project="$PROJECT_ID" 2>/dev/null | while read -r email; do
                     [ -n "$email" ] && log "Deleting orphaned SA: $email" && gcloud iam service-accounts delete "$email" --project="$PROJECT_ID" --quiet 2>/dev/null || true
                 done
+                ;;
+            azure)
+                # terraform treats the RG as data and never deletes it, so a fresh
+                # single-purpose RG would be orphaned. Reclaim it ONLY if the harness
+                # created it (created-by tag) AND it is now empty. A pre-existing/
+                # shared (untagged) or still-populated RG is left untouched.
+                if [ -n "$RESOURCE_GROUP" ]; then
+                    SUB_ID="${PROJECT_ID:-$(az account show --query id -o tsv 2>/dev/null)}"
+                    RG_OWNED=$(az group show --subscription "$SUB_ID" -n "$RESOURCE_GROUP" --query "tags.\"created-by\"" -o tsv 2>/dev/null)
+                    if [ "$RG_OWNED" = "mayascale-validate" ]; then
+                        RG_LEFT=$(az resource list --subscription "$SUB_ID" -g "$RESOURCE_GROUP" --query "length(@)" -o tsv 2>/dev/null)
+                        if [ "$RG_LEFT" = "0" ]; then
+                            log "Reclaiming harness-created RG '$RESOURCE_GROUP' (tagged, empty)..."
+                            az group delete --subscription "$SUB_ID" -n "$RESOURCE_GROUP" --yes -o none 2>/dev/null || true
+                        else
+                            log "RG '$RESOURCE_GROUP' still has $RG_LEFT resource(s) - leaving it"
+                        fi
+                    fi
+                fi
                 ;;
         esac
         success "Cleanup complete"
@@ -667,17 +830,46 @@ echo " Policy:       $POLICY"
 echo " Machine Type: $RESOLVED_MACHINE_TYPE"
 echo " Spot:         $USE_SPOT"
 
-# Enable colocation for zonal policies (placement group)
-ENABLE_COLOCATION="false"
-if [[ "$POLICY" =~ ^zonal ]]; then
-    ENABLE_COLOCATION="true"
-    echo " Colocation:   enabled"
-    if [ "$USE_SPOT" = "true" ]; then
-        warn "Spot + colocation may fail if capacity unavailable. Retry without --spot if needed."
+# Colocation (compact placement group) is opt-in via --colocation (sets ENABLE_COLOCATION),
+# and only valid for zonal policies. OFF by default: functional tests need no rack locality,
+# and skipping it avoids the placement-policy lifecycle friction (destroy-in-use / re-create
+# 409 with a kept client).
+if [ "$ENABLE_COLOCATION" = "true" ]; then
+    if [[ "$POLICY" =~ ^zonal ]]; then
+        echo " Colocation:   enabled (--colocation)"
+        if [ "$USE_SPOT" = "true" ]; then
+            warn "Spot + colocation may fail if capacity unavailable. Retry without --spot if needed."
+        fi
+    else
+        warn "--colocation ignored: requires a zonal performance policy (got '$POLICY')"
+        ENABLE_COLOCATION="false"
     fi
 fi
 echo "========================================"
 echo ""
+
+# When --skip-client preserves the client, it holds the shared compact placement
+# policy open (client_count reserves a slot for it), so the policy survives a storage
+# destroy. A later storage apply would then 409 trying to CREATE the same-named policy.
+# If it already exists in GCP but isn't in state, import it so apply ADOPTS it (the
+# new nodes colocate with the preserved client). No-op unless GCP + --skip-client +
+# zonal colocation, and only when the policy actually pre-exists.
+adopt_placement_policy() {
+    [ "$CLOUD" = "gcp" ] && [ "$SKIP_CLIENT" = "true" ] && [ "$ENABLE_COLOCATION" = "true" ] || return 0
+    local region name addr id
+    region=$(echo "$ZONE" | sed 's/-[^-]*$//')
+    name="${DEPLOYMENT_NAME}-placement-policy"
+    addr='google_compute_resource_policy.mayascale_placement_policy[0]'
+    id="projects/${PROJECT_ID}/regions/${region}/resourcePolicies/${name}"
+    terraform state list 2>/dev/null | grep -qxF "$addr" && return 0        # already tracked
+    gcloud compute resource-policies describe "$name" --region="$region" --project="$PROJECT_ID" &>/dev/null || return 0  # not present -> normal create
+    log "Adopting pre-existing placement policy '$name' into state (--skip-client)..."
+    if terraform import "$addr" "$id" >> "$RESULTS_DIR/storage_import.log" 2>&1; then
+        success "Imported placement policy '$name' (adopt instead of recreate)"
+    else
+        warn "Import of '$name' failed - apply may 409; see $RESULTS_DIR/storage_import.log"
+    fi
+}
 
 # Deploy storage
 if [ "$SKIP_DEPLOY" = "true" ]; then
@@ -695,6 +887,7 @@ elif [ -f "terraform.tfstate" ]; then
         if [ ! -d ".terraform" ]; then
             terraform init -upgrade > "$RESULTS_DIR/storage_init.log" 2>&1 || true
         fi
+        adopt_placement_policy
         log "Running terraform apply (log: $RESULTS_DIR/storage_apply.log)..."
         if ! terraform_apply_with_retry "$RESULTS_DIR/storage_apply.log"; then
             fail "Terraform apply failed - see $RESULTS_DIR/storage_apply.log"
@@ -714,10 +907,14 @@ project_id = "$PROJECT_ID"
 region = "$REGION"
 cluster_name = "$DEPLOYMENT_NAME"
 performance_policy = "$POLICY"
+deployment_type = "$([ "$VG_MODE" = "true" ] && echo "vg-active-active" || ([ "$FSX_MODE" = "true" ] && echo "zfs-active-active" || echo "active-active"))"
 zone = "$ZONE"
 machine_type = "$RESOLVED_MACHINE_TYPE"
 use_spot_vms = $USE_SPOT
 assign_public_ip = $ASSIGN_PUBLIC_IP
+cluster_slot = $CLUSTER_SLOT
+mayascale_startup_wait=15
+enable_colocation = $ENABLE_COLOCATION
 EOF
             # Reserve client slot in placement policy for colocation
             if [ "$ENABLE_COLOCATION" = "true" ]; then
@@ -730,6 +927,8 @@ EOF
 key_pair_name = "$KEY_PAIR_NAME"
 cluster_name = "$DEPLOYMENT_NAME"
 performance_policy = "$POLICY"
+deployment_type = "$([ "$VG_MODE" = "true" ] && echo "vg-active-active" || ([ "$FSX_MODE" = "true" ] && echo "zfs-active-active" || echo "active-active"))"
+cluster_slot = $CLUSTER_SLOT
 instance_type_override = "$RESOLVED_MACHINE_TYPE"
 use_spot_instances = $USE_SPOT
 assign_public_ip = $ASSIGN_PUBLIC_IP
@@ -745,14 +944,34 @@ subscription_id = "$AZURE_SUB_ID"
 cluster_name = "$DEPLOYMENT_NAME"
 location = "$LOCATION"
 performance_policy = "$POLICY"
+deployment_type = "$([ "$VG_MODE" = "true" ] && echo "vg-active-active" || ([ "$FSX_MODE" = "true" ] && echo "zfs-active-active" || echo "active-active"))"
+cluster_slot = $CLUSTER_SLOT
+bucket_count = $BUCKET_COUNT
 use_spot_instances = $USE_SPOT
 assign_public_ip = $ASSIGN_PUBLIC_IP
 $([ -n "$SSH_PUBLIC_KEY" ] && echo "ssh_public_key = \"$SSH_PUBLIC_KEY\"")
+mayascale_startup_wait= 10
 EOF
             if [ -n "$RESOURCE_GROUP" ]; then
                 echo "resource_group_name = \"$RESOURCE_GROUP\"" >> terraform.tfvars
+                # named RG: terraform references it as data, never owns/deletes it.
+                # If it doesn't exist yet WE create it and TAG it, so -d can reclaim
+                # the otherwise-orphaned fresh RG. A pre-existing (untagged) RG is
+                # left untouched on destroy.
+                if [ "$(az group exists --subscription "$AZURE_SUB_ID" -n "$RESOURCE_GROUP" 2>/dev/null)" = "false" ]; then
+                    az group create --subscription "$AZURE_SUB_ID" -n "$RESOURCE_GROUP" -l "$LOCATION" --tags created-by=mayascale-validate -o none 2>/dev/null || true
+                fi
+                # An RG's region is fixed at creation; the module derives all placement
+                # (and the zone check) from the RG's location, so a reused RG in another
+                # region silently overrides -l. Fail loudly so the user picks a fresh RG.
+                RG_LOC=$(az group show --subscription "$AZURE_SUB_ID" -n "$RESOURCE_GROUP" --query location -o tsv 2>/dev/null)
+                if [ -n "$RG_LOC" ] && [ "$RG_LOC" != "$LOCATION" ]; then
+                    fail "Resource group '$RESOURCE_GROUP' is in '$RG_LOC' but you requested -l '$LOCATION'. An RG's region cannot be changed -- use a new -g name (created in '$LOCATION') or set -l '$RG_LOC'."
+                    exit 1
+                fi
             fi
-            # Azure PPG auto-created for zonal policies
+            # PPG (proximity placement group) is OPT-IN -- only when --colocation asked
+            echo "enable_proximity_placement_group = $ENABLE_COLOCATION" >> terraform.tfvars
             ;;
     esac
 
@@ -807,7 +1026,7 @@ EOFCLIENT
                     STORAGE_VCPUS=$(echo "$RESOLVED_MACHINE_TYPE" | grep -oE '[0-9]+' | head -1)
                     CLIENT_VCPUS=$((STORAGE_VCPUS * 2))
                     [ "$CLIENT_VCPUS" -lt 16 ] && CLIENT_VCPUS=16
-                    CLIENT_MACHINE_TYPE="Standard_D${CLIENT_VCPUS}s_v5"
+                    CLIENT_MACHINE_TYPE="Standard_D${CLIENT_VCPUS}s_v6"
                 fi
                 cat > "$CLIENT_DIR/terraform.tfvars" <<EOFCLIENT
 subscription_id = "$AZURE_SUB_ID"
@@ -815,14 +1034,18 @@ resource_group_name = "$RESOURCE_GROUP"
 location = "$LOCATION"
 client_name = "${DEPLOYMENT_NAME}-client"
 ssh_public_key = "$SSH_PUBLIC_KEY"
-vnet_name = "vnet-${DEPLOYMENT_NAME}"
-subnet_name = "subnet-${DEPLOYMENT_NAME}"
+# Azure: client shares the storage vnet (fixed mayascale-vnet) -- a per-deployment
+# vnet would duplicate the VIP address space. Matches storage module default.
+vnet_name = "mayascale-vnet"
+subnet_name = "mayascale-subnet"
 use_spot = $USE_SPOT
 admin_username = "mayascale"
 vm_size = "$CLIENT_MACHINE_TYPE"
 EOFCLIENT
-                # Add PPG for zonal deployments (non-regional policies)
-                if [[ ! "$POLICY" =~ ^regional- ]]; then
+                # PPG is opt-in via --colocation (storage creates it only then, same
+                # gate as enable_proximity_placement_group). A zonal deploy WITHOUT
+                # --colocation has no PPG -> don't reference one (else client VM 404s).
+                if [ "$ENABLE_COLOCATION" = "true" ]; then
                     PPG_ID="/subscriptions/${AZURE_SUB_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Compute/proximityPlacementGroups/ppg-${DEPLOYMENT_NAME}"
                     echo "proximity_placement_group_id = \"$PPG_ID\"" >> "$CLIENT_DIR/terraform.tfvars"
                 fi
@@ -830,6 +1053,7 @@ EOFCLIENT
         esac
 
         # Init client
+        client_state_guard "$CLIENT_DIR" "$RESOURCE_GROUP"
         (cd "$CLIENT_DIR" && terraform init -upgrade > "$RESULTS_DIR/client_init.log" 2>&1)
 
         # Start storage in background
@@ -843,6 +1067,17 @@ EOFCLIENT
             PLACEMENT_POLICY_NAME="${DEPLOYMENT_NAME}-placement-policy"
             for i in {1..12}; do
                 gcloud compute resource-policies describe "$PLACEMENT_POLICY_NAME" --region="$REGION" --project="$PROJECT_ID" &>/dev/null && break
+                sleep 5
+            done
+        fi
+
+        # Azure: client reads the storage vnet (mayascale-vnet) as a data source --
+        # wait for storage to create it (appears early, well before VMs) so the
+        # parallel client apply doesn't race to a "vnet not found" failure.
+        if [ "$CLOUD" = "azure" ]; then
+            log "Waiting for storage vnet (mayascale-vnet)..."
+            for i in {1..30}; do
+                az network vnet show --subscription "$AZURE_SUB_ID" -g "$RESOURCE_GROUP" -n mayascale-vnet -o none 2>/dev/null && break
                 sleep 5
             done
         fi
@@ -861,6 +1096,7 @@ EOFCLIENT
         [ "$CLIENT_OK" = true ] && success "Client deployed" && CLIENT_DEPLOYED_PARALLEL=true || warn "Client failed - see $RESULTS_DIR/client_apply.log"
     else
         # No client - just deploy storage
+        adopt_placement_policy
         log "Running terraform apply (log: $RESULTS_DIR/storage_apply.log)..."
         if ! terraform_apply_with_retry "$RESULTS_DIR/storage_apply.log"; then
             fail "Terraform apply failed - see $RESULTS_DIR/storage_apply.log"
@@ -947,9 +1183,16 @@ CLIENT_DEPLOY_PID=""
 CLIENT_REUSED="false"
 if [ "$SKIP_CLIENT" = "false" ] && [ "${CLIENT_DEPLOYED_PARALLEL:-false}" != "true" ]; then
     CLIENT_DIR="$SCRIPT_DIR/$CLOUD/client-testing"
+    # Drop stale state from a different RG so we don't refresh a prior cluster.
+    client_state_guard "$CLIENT_DIR" "$RESOURCE_GROUP"
 
     if [ -f "$CLIENT_DIR/terraform.tfstate" ]; then
         log "Existing client found - refreshing in background..."
+        # Reconcile the PPG ref to the CURRENT storage: a prior deploy may have left
+        # a ppg-<name> in tfvars that this storage didn't create (PPG opt-out) ->
+        # client VM create 404s on the missing PPG. Strip + re-add per current PPG_ID.
+        sed -i '/^proximity_placement_group_id/d' "$CLIENT_DIR/terraform.tfvars" 2>/dev/null
+        [ -n "$PPG_ID" ] && echo "proximity_placement_group_id = \"$PPG_ID\"" >> "$CLIENT_DIR/terraform.tfvars"
         (
             cd "$CLIENT_DIR" || exit 1
             terraform apply -auto-approve -refresh=true > "$RESULTS_DIR/client_refresh.log" 2>&1
@@ -1191,6 +1434,71 @@ if [ "$SKIP_CLIENT" = "false" ]; then
             fi
         }
 
+        # Build csi_backend.json for the client. vg substrate -> the terraform csi_backend
+        # output as-is. zfs/zpool substrate -> live pools are data-pool-1/2, so remap the
+        # node-level clusterid/VIP pairs (correct in the output regardless of pool naming)
+        # onto those names. CSI_DRIVER (--csi) sets the product (mayascale=block/zvol,
+        # mayanas=file/NFS) + the driver-named VIP-list key. Works on --skip-deploy resume.
+        build_csi_backend() {
+            local drv="${1:-$CSI_DRIVER}"
+            local raw; raw=$(terraform output -json csi_backend 2>/dev/null) || return 1
+            [ -n "$raw" ] || return 1
+            if [ "$FSX_MODE" = "true" ]; then
+                # Match pools to nodes by VIP order (vip1->node1->data-pool-1), robust whether
+                # the output has stale vg names or already-correct data-pool-N names.
+                echo "$raw" | jq --arg drv "$drv" '
+                    (.mayascale // .mayanas) as $vips
+                    | ($vips | split(",")) as $vl
+                    | (.pools | to_entries | map(.value) | unique_by(.vip)) as $n
+                    | { driver: $drv, ($drv): $vips,
+                        pools: {
+                          "data-pool-1": ($n | map(select(.vip==$vl[0]))[0]),
+                          "data-pool-2": ($n | map(select(.vip==$vl[1]))[0]) },
+                        zone_cluster_map: .zone_cluster_map }'
+            else
+                echo "$raw" | jq --arg drv "$drv" '
+                    (.mayascale // .mayanas) as $vips
+                    | del(.mayascale, .mayanas) | .driver = $drv | .[$drv] = $vips'
+            fi
+        }
+
+        # CSI mode: vg-active-active (always) OR --csi (any substrate). No auto-exported
+        # volumes -- stage CSI inputs (csi_backend.json + scripts), skip connect+fio.
+        if [ "$VG_MODE" = "true" ] || [ "$CSI_MODE" = "true" ]; then
+            # csi_backend.json = the --csi choice (default mayascale).
+            CSI_OTHER=$([ "$CSI_DRIVER" = "mayascale" ] && echo mayanas || echo mayascale)
+            if build_csi_backend "$CSI_DRIVER" > "$RESULTS_DIR/csi_backend.json" 2>/dev/null && [ -s "$RESULTS_DIR/csi_backend.json" ]; then
+                copy_to_client "$RESULTS_DIR/csi_backend.json" csi_backend.json
+                success "Staged csi_backend.json on client (driver=$CSI_DRIVER, saved to $RESULTS_DIR)"
+                # A ZFS/zpool cluster serves BOTH protocols (zvol+nvme-of AND dataset+NFS),
+                # so also stage the other driver's backend -- the client can test block AND
+                # file from one deploy, no hand-retag. (vg substrate = block only, skip.)
+                if [ "$FSX_MODE" = "true" ] && \
+                   build_csi_backend "$CSI_OTHER" > "$RESULTS_DIR/csi_backend_$CSI_OTHER.json" 2>/dev/null && \
+                   [ -s "$RESULTS_DIR/csi_backend_$CSI_OTHER.json" ]; then
+                    copy_to_client "$RESULTS_DIR/csi_backend_$CSI_OTHER.json" "csi_backend_$CSI_OTHER.json"
+                    success "Staged csi_backend_$CSI_OTHER.json on client (driver=$CSI_OTHER) -- same zpool, other protocol"
+                fi
+            else
+                warn "could not build csi_backend.json -- not staged (need jq + a valid csi_backend output)"
+            fi
+            for s in csi-client-setup.sh csi-fio-test.sh csi-fio-block-test.sh csi-expand-test.sh csi-sanity-test.sh csi-sanity-multi.sh; do
+                if [ -f "$SCRIPT_DIR/$s" ]; then
+                    copy_to_client "$SCRIPT_DIR/$s" "$s"
+                    run_client_ssh "chmod +x ~/$s"
+                    success "Staged $s on client"
+                else
+                    warn "$s not found: $SCRIPT_DIR/$s"
+                fi
+            done
+            log "On client: sudo ./csi-client-setup.sh --backend-json ~/csi_backend.json --image-tar <img.tar>"
+            log "Then:      sudo ./csi-fio-test.sh       --backend-json ~/csi_backend.json   # filesystem (mixed randrw)"
+            log "Raw block: sudo ./csi-fio-block-test.sh --backend-json ~/csi_backend.json   # separate r/w IOPS + latency"
+            if [ "$FSX_MODE" = "true" ]; then
+                log "Other protocol: same cluster also serves $CSI_OTHER -- redo client-setup + tests with --backend-json ~/csi_backend_$CSI_OTHER.json"
+            fi
+        else
+
         # Test 3: Connect NVMe volumes on client
         log "Test 3: Connecting NVMe volumes..."
         CONNECT_SCRIPT="$SCRIPT_DIR/connect_volumes.sh"
@@ -1242,6 +1550,7 @@ EOF
             fi
         else
             warn "FIO test script not found: $FIO_SCRIPT"
+        fi
         fi
     fi
 fi

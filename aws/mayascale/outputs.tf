@@ -180,7 +180,7 @@ output "ssh_commands" {
 output "cost_optimization_tips" {
   description = "Tips for cost optimization"
   value = {
-    spot_instances         = "Enable use_spot_instances=true for 50-70% cost savings"
+    spot_instances        = "Enable use_spot_instances=true for 50-70% cost savings"
     right_sizing          = "Choose tier based on actual IOPS needs, not just capacity"
     single_az_vs_multi_az = "Single-AZ deployment costs ~50% of Multi-AZ"
     instance_family       = "i3 < i3en (cost increases with capacity)"
@@ -217,28 +217,67 @@ output "availability_zone" {
 output "deployment_summary" {
   description = "Complete deployment summary for validation scripts (standardized schema)"
   value = {
-    cloud_provider          = "aws"
-    cluster_name            = local.cluster_name
-    deployment_id           = random_id.suffix.hex
-    performance_policy      = var.performance_policy
-    availability_strategy   = local.selected_policy.availability_strategy
+    cloud_provider        = "aws"
+    cluster_name          = local.cluster_name
+    deployment_id         = random_id.suffix.hex
+    performance_policy    = var.performance_policy
+    availability_strategy = local.selected_policy.availability_strategy
 
-    instance_type           = local.selected_instance_type
-    vcpus                   = lookup(local.vcpu_map, local.selected_instance_type, 0)
-    nvme_capacity_gb        = local.selected_policy.nvme_capacity_gb
-    ssd_count               = local.selected_policy.nvme_device_count
+    instance_type    = local.selected_instance_type
+    vcpus            = lookup(local.vcpu_map, local.selected_instance_type, 0)
+    nvme_capacity_gb = local.selected_policy.nvme_capacity_gb
+    ssd_count        = local.selected_policy.nvme_device_count
 
     target_write_iops       = local.selected_policy.target_write_iops
     target_read_iops        = local.selected_policy.target_read_iops
     target_write_latency_us = local.selected_policy.target_write_latency
     target_bandwidth_MBps   = local.selected_policy.target_bandwidth_mbps
 
-    zone_primary            = local.node1_az
-    zone_secondary          = local.node2_az
-    region                  = var.region
+    zone_primary   = local.node1_az
+    zone_secondary = local.node2_az
+    region         = var.region
 
-    cost_tier               = local.selected_policy.capacity_optimization
-    dual_nic_enabled        = false
+    cost_tier        = local.selected_policy.capacity_optimization
+    dual_nic_enabled = false
+  }
+}
+
+# CSI backend wiring (for the ZettaLane CSI driver, provisioner csi-mayascale.zettalane.com).
+# Feed straight into the driver config Secret / Helm values. Use with
+# deployment_type = "vg-active-active": the driver carves per-PVC LVs from the per-node
+# CSI VG and exports them as per-volume NVMe-oF subsystems (portalgroup=auto). Mirrors the
+# mayanas csi_backend shape so both products configure the driver identically.
+output "csi_backend" {
+  description = "Connection + pool map for the csi-mayascale driver (cluster VIP list named for the driver, pool -> {clusterid, vip}). Pools branch on deployment_type: vg-active-active -> per-node VG + thinpool; zfs-active-active -> per-node zpool data-pool-{1,2}."
+  value = {
+    # options.driver -- selects the product/instance (block backend, RWO).
+    driver = "mayascale"
+    # Control-plane VIP list (key named for the driver): control failover AND
+    # pool/clusterid/VIP discovery. MayaScale is always 2-node active-active.
+    mayascale = join(",", [local.vip_address, local.vip_address_2])
+
+    # CSI pools per node, created by cluster_mayascale.sh; the driver discovers each pool's
+    # kind (V_VG / V_THINPOOL / V_ZPOOL) and routes accordingly. Branch on deployment_type:
+    #   vg-active-active  -> thick VG <cluster>-vg-node{1,2} (driver carves V_FLEX LVs) AND a
+    #                        thin pool <cluster>-vgpool-node{1,2} inside it (thin LVs).
+    #   zfs-active-active -> one zpool per node, data-pool-{1,2} (driver carves zvols/datasets).
+    # tomap() so both ternary branches share a type (different key counts otherwise).
+    pools = var.deployment_type == "zfs-active-active" ? tomap({
+      "data-pool-1" = { clusterid = random_integer.resource_id.result, vip = local.vip_address }
+      "data-pool-2" = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
+    }) : tomap({
+      "${local.cluster_name}-vg-node1"     = { clusterid = random_integer.resource_id.result, vip = local.vip_address }
+      "${local.cluster_name}-vg-node2"     = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
+      "${local.cluster_name}-vgpool-node1" = { clusterid = random_integer.resource_id.result, vip = local.vip_address }
+      "${local.cluster_name}-vgpool-node2" = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
+    })
+
+    # zone -> data VIP, for the driver's zone-aware topology (zone_cluster_map).
+    # AWS AZ names (topology.kubernetes.io/zone on EKS nodes) map to the owning node's VIP.
+    zone_cluster_map = {
+      (local.node1_az) = local.vip_address
+      (local.node2_az) = local.vip_address_2
+    }
   }
 }
 
@@ -257,23 +296,23 @@ output "module_version" {
 output "deployment_info" {
   description = "Structured deployment information for automation scripts"
   value = {
-    cluster_name        = local.cluster_name
-    node_count          = 2
-    region              = var.region
-    primary_az          = local.node1_az
-    secondary_az        = local.node2_az
-    machine_type        = local.selected_instance_type
-    node1_name          = aws_instance.mayascale_node1.id
-    node1_az            = aws_instance.mayascale_node1.availability_zone
-    node1_external_ip   = var.assign_public_ip ? aws_instance.mayascale_node1.public_ip : null
-    node1_internal_ip   = aws_instance.mayascale_node1.private_ip
-    node2_name          = aws_instance.mayascale_node2.id
-    node2_az            = aws_instance.mayascale_node2.availability_zone
-    node2_external_ip   = var.assign_public_ip ? aws_instance.mayascale_node2.public_ip : null
-    node2_internal_ip   = aws_instance.mayascale_node2.private_ip
-    vip_primary         = local.vip_address
-    vip_secondary       = local.vip_address_2
-    total_nvme_count    = local.selected_policy.nvme_device_count * 2
-    total_capacity_gb   = local.selected_policy.nvme_capacity_gb
+    cluster_name      = local.cluster_name
+    node_count        = 2
+    region            = var.region
+    primary_az        = local.node1_az
+    secondary_az      = local.node2_az
+    machine_type      = local.selected_instance_type
+    node1_name        = aws_instance.mayascale_node1.id
+    node1_az          = aws_instance.mayascale_node1.availability_zone
+    node1_external_ip = var.assign_public_ip ? aws_instance.mayascale_node1.public_ip : null
+    node1_internal_ip = aws_instance.mayascale_node1.private_ip
+    node2_name        = aws_instance.mayascale_node2.id
+    node2_az          = aws_instance.mayascale_node2.availability_zone
+    node2_external_ip = var.assign_public_ip ? aws_instance.mayascale_node2.public_ip : null
+    node2_internal_ip = aws_instance.mayascale_node2.private_ip
+    vip_primary       = local.vip_address
+    vip_secondary     = local.vip_address_2
+    total_nvme_count  = local.selected_policy.nvme_device_count * 2
+    total_capacity_gb = local.selected_policy.nvme_capacity_gb
   }
 }

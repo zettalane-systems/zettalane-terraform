@@ -8,7 +8,7 @@
 variable "mayascale_product_code" {
   description = "AWS Marketplace product code for MayaScale (used for auto AMI lookup)"
   type        = string
-  default     = "PLACEHOLDER_MAYASCALE_PRODUCT_CODE"  # TODO: Update with actual product code before release
+  default     = "PLACEHOLDER_MAYASCALE_PRODUCT_CODE" # TODO: Update with actual product code before release
 }
 
 # Core Configuration
@@ -51,6 +51,16 @@ variable "availability_zone" {
   description = "Primary availability zone for deployment (defaults to first available AZ)"
   type        = string
   default     = ""
+}
+
+variable "cluster_slot" {
+  description = "Index of this HA pair within the shared (default) VPC, used to deterministically partition VIPs (matches GCP/Azure). 0 = standalone (random VIP offset). 1,2,... = each pair claims 2 contiguous VIP offsets (50 + slot*2) so multiple pairs in the same VPC subnet don't collide. The backend is already isolated in its own per-cluster VPC (aws_vpc.backend), so cluster_slot affects ONLY the VIP here. Range: 0-99."
+  type        = number
+  default     = 0
+  validation {
+    condition     = var.cluster_slot >= 0 && var.cluster_slot <= 99
+    error_message = "cluster_slot must be between 0 and 99 (VIP offset 50 + slot*2 must stay within the subnet)."
+  }
 }
 
 variable "availability_zone_secondary" {
@@ -203,6 +213,12 @@ variable "client_exports_enabled" {
   default     = true
 }
 
+variable "ha_data" {
+  description = "Enable per-pool HA shared state (Samba passdb + NFS lock recovery) so SMB auth and NFS NLM/NFSv4 locks survive a takeover"
+  type        = bool
+  default     = true
+}
+
 variable "client_nvme_port" {
   description = "Starting port for NVMe-oF client connections"
   type        = number
@@ -232,13 +248,13 @@ variable "client_access_control" {
 }
 
 variable "deployment_type" {
-  description = "Deployment architecture: 'active-active' (MD RAID + ZFS) or 'zfs-active-active' (ZFS mirror vdevs, FSx for OpenZFS equivalent)"
+  description = "Deployment architecture: 'active-active' (MD RAID + ZFS), 'zfs-active-active' (ZFS mirror vdevs, FSx for OpenZFS equivalent), or 'vg-active-active' (LVM VG on the MD-RAID backing for Kubernetes CSI -- ZettaLane CSI driver provisioner csi-mayascale.zettalane.com carves per-PVC LVs + per-volume NVMe-oF subsystems; the default data-node-X block auto-export is skipped and a CSI nvmet portal group is created instead)"
   type        = string
   default     = "active-active"
 
   validation {
-    condition     = contains(["active-active", "zfs-active-active"], var.deployment_type)
-    error_message = "deployment_type must be either 'active-active' or 'zfs-active-active'"
+    condition     = contains(["active-active", "zfs-active-active", "vg-active-active"], var.deployment_type)
+    error_message = "deployment_type must be 'active-active', 'zfs-active-active', or 'vg-active-active'"
   }
 }
 
@@ -248,10 +264,10 @@ variable "shares" {
   type = list(object({
     name         = string
     recordsize   = string
-    export       = string  # "nfs", "nfs3", "smb", or "multi"
+    export       = string # "nfs", "nfs3", "smb", or "multi"
     nfs_options  = optional(string, "")
     smb_options  = optional(string, "")
-    smb_profile  = optional(string, "")  # "posix", "windows", or "multiprotocol"
+    smb_profile  = optional(string, "") # "posix", "windows", or "multiprotocol"
     smb_user     = optional(string, "")
     smb_password = optional(string, "")
     smb_uid      = optional(string, "")

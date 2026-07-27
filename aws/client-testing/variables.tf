@@ -37,3 +37,9 @@ variable "use_spot" {
   type        = bool
   default     = true
 }
+
+variable "availability_zone" {
+  description = "AZ to place the client in -- colocates with the storage cluster's AZ (the deploy script injects the storage AWS_AZ here) so the nvme-of data path stays in-AZ. Empty -> first available subnet in the VPC."
+  type        = string
+  default     = ""
+}

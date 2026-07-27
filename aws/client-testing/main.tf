@@ -14,6 +14,15 @@ data "aws_subnets" "default" {
     name   = "vpc-id"
     values = [data.aws_vpc.default.id]
   }
+  # Colocate the client in the storage cluster's AZ (var.availability_zone, set by
+  # the deploy script) so the nvme-of data path stays in-AZ. Empty -> any subnet.
+  dynamic "filter" {
+    for_each = var.availability_zone != "" ? [1] : []
+    content {
+      name   = "availability-zone"
+      values = [var.availability_zone]
+    }
+  }
 }
 
 data "aws_ami" "ubuntu" {
