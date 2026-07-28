@@ -425,15 +425,14 @@ if [[ ! "$BUCKET_COUNT" =~ ^[0-4]$ ]]; then
     fail "--bucket-count must be between 0 and 4 (0 = no object cold tier)"
 fi
 
-# The objbacker cold tier is azure-only for now: gcp/aws mayascale provision no
-# buckets, so a non-zero count there would silently do nothing.
-if [ "$BUCKET_COUNT" -gt 0 ] && [ "$CLOUD" != "azure" ]; then
-    fail "--bucket-count is only supported on azure (got: $CLOUD)"
+# The objbacker cold tier: azure + gcp mayascale provision buckets (aws does not).
+if [ "$BUCKET_COUNT" -gt 0 ] && [ "$CLOUD" != "azure" ] && [ "$CLOUD" != "gcp" ]; then
+    fail "--bucket-count is only supported on azure/gcp (got: $CLOUD)"
 fi
 
-# Single-node (zfs-single / vg-single) exists only in azure/mayascale for now.
-if [ -n "$DEPLOY_TYPE_OVERRIDE" ] && [ "$CLOUD" != "azure" ]; then
-    fail "--fsx $DEPLOY_TYPE_OVERRIDE (single-node) is only supported on azure (got: $CLOUD)"
+# Single-node (zfs-single / vg-single): azure + gcp mayascale.
+if [ -n "$DEPLOY_TYPE_OVERRIDE" ] && [ "$CLOUD" != "azure" ] && [ "$CLOUD" != "gcp" ]; then
+    fail "--fsx $DEPLOY_TYPE_OVERRIDE (single-node) is only supported on azure/gcp (got: $CLOUD)"
 fi
 
 # CSI needs a provisionable substrate. The default (active-active = MD-RAID block whose
@@ -921,6 +920,8 @@ machine_type = "$RESOLVED_MACHINE_TYPE"
 use_spot_vms = $USE_SPOT
 assign_public_ip = $ASSIGN_PUBLIC_IP
 cluster_slot = $CLUSTER_SLOT
+bucket_count = $BUCKET_COUNT
+force_destroy_buckets = true
 mayascale_startup_wait=15
 enable_colocation = $ENABLE_COLOCATION
 EOF

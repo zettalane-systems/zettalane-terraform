@@ -103,8 +103,12 @@ else
     echo "$(date): Current aliases: $EXISTING_ALIASES"
 fi
 
-# Ensure MayaScale setup script exists
+# Setup script: cluster_mayascale.sh for 2-node active-active; standalone_mayascale.sh single.
+%{ if node_count > 1 ~}
 MAYASCALE_SETUP_SCRIPT="/opt/mayastor/config/cluster_mayascale.sh"
+%{ else ~}
+MAYASCALE_SETUP_SCRIPT="/opt/mayastor/config/standalone_mayascale.sh"
+%{ endif ~}
 if [ ! -x "$MAYASCALE_SETUP_SCRIPT" ]; then
     echo "ERROR: MayaScale setup script not found at $MAYASCALE_SETUP_SCRIPT"
     exit 1
@@ -190,10 +194,25 @@ export MAYASCALE_BACKEND_SECONDARY_IP="$PEER_BACKEND_IP"
 
 # System configuration (space-separated pairs for active-active)
 export MAYASCALE_PROJECT_ID="$PROJECT_ID"
+%{ if node_count > 1 ~}
 export MAYASCALE_RESOURCE_ID="${resource_id} ${peer_resource_id}"
+%{ else ~}
+export MAYASCALE_RESOURCE_ID="0"
+%{ endif ~}
 export MAYASCALE_PERFORMANCE_POLICY="${performance_policy}"
 export MAYASCALE_NVME_COUNT="${nvme_count}"
+%{ if node_count > 1 ~}
 export MAYASCALE_CLUSTER_ID="${resource_id}"
+%{ else ~}
+export MAYASCALE_CLUSTER_ID="0"
+%{ endif ~}
+
+# Object cold tier (objbacker): GCS buckets tenant datasets replicate onto from
+# the local-NVMe hot pool. Empty unless terraform ran with bucket_count > 0.
+export MAYASCALE_COLD_BUCKETS_NODE1="${bucket_node1}"
+export MAYASCALE_COLD_BUCKETS_NODE2="${bucket_node2}"
+export MAYASCALE_S3_ACCESS_KEY="${gcs_access_key}"
+export MAYASCALE_S3_SECRET_KEY="${gcs_secret_key}"
 
 # Client volume export configuration
 export CLIENT_NVME_PORT="${client_nvme_port}"

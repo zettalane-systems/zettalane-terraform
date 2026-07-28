@@ -74,6 +74,17 @@ locals {
   # MayaScale deployment configuration
   cluster_name = var.cluster_name
 
+  # node_count derived from deployment_type: *-single -> 1, else 2 (active-active pair).
+  node_count = endswith(var.deployment_type, "-single") ? 1 : 2
+
+  # Single-node has no VIP -> the control/data endpoint is node1's primary internal IP.
+  csi_node1_vip = local.node_count > 1 ? local.vip_address : google_compute_instance.mayascale_nodes[0].network_interface[0].network_ip
+
+  # objbacker cold tier: pair holds bucket_count*2 (node1's first, node2's rest); single = 1x
+  object_tier_enabled = var.bucket_count > 0
+  total_bucket_count  = local.node_count > 1 ? var.bucket_count * 2 : var.bucket_count
+  bucket_names        = [for b in google_storage_bucket.mayascale_data : b.name]
+
   # Placement policy ID - use existing policy if provided, otherwise use created policy
   placement_policy_id = (
     var.placement_policy_name != "" ?
@@ -373,6 +384,30 @@ resource "google_project_iam_member" "mayascale_service_account_user" {
   member  = "serviceAccount:${google_service_account.mayascale_service_account.email}"
 }
 
+# objbacker cold tier: HMAC key for GCS S3-compat (the SA already has storage.admin).
+resource "google_storage_hmac_key" "mayascale_hmac" {
+  count                 = local.object_tier_enabled ? 1 : 0
+  service_account_email = google_service_account.mayascale_service_account.email
+}
+
+# GCS buckets for the objbacker cold tier (nothing created unless bucket_count > 0).
+resource "google_storage_bucket" "mayascale_data" {
+  count = local.total_bucket_count
+
+  name                        = "${local.cluster_name}-data-${count.index}-${random_id.suffix.hex}"
+  location                    = var.region
+  storage_class               = "STANDARD"
+  force_destroy               = var.force_destroy_buckets
+  uniform_bucket_level_access = true
+
+  labels = {
+    cluster         = local.cluster_name
+    purpose         = "mayascale-cold-tier"
+    bucket_index    = tostring(count.index)
+    node_assignment = count.index < var.bucket_count ? "node1" : "node2"
+  }
+}
+
 # Get default network for primary interface
 data "google_compute_subnetwork" "default" {
   name   = "default"
@@ -451,7 +486,7 @@ resource "google_compute_firewall" "mayascale_backend_internal" {
 
 # MayaScale Storage Nodes
 resource "google_compute_instance" "mayascale_nodes" {
-  count        = 2
+  count        = local.node_count
   name         = "${local.cluster_name}-node${count.index + 1}"
   machine_type = local.selected_machine_type
   zone         = local.zone_strategy[count.index]
@@ -574,7 +609,7 @@ resource "google_compute_instance" "mayascale_nodes" {
     zone               = local.zone_strategy[0] # Always primary zone
     primary_instance   = "${local.cluster_name}-node1"
     secondary_instance = "${local.cluster_name}-node2"
-    node_count         = 2
+    node_count         = local.node_count
     # Client export configuration
     client_nvme_port       = var.client_nvme_port
     client_iscsi_port      = var.client_iscsi_port
@@ -583,6 +618,11 @@ resource "google_compute_instance" "mayascale_nodes" {
     ha_data                = var.ha_data ? 1 : 0
     # Share configuration
     shares = jsonencode(var.shares)
+    # objbacker cold tier (empty when bucket_count = 0 -> startup skips it)
+    bucket_node1   = local.object_tier_enabled ? join(" ", slice(local.bucket_names, 0, var.bucket_count)) : ""
+    bucket_node2   = local.object_tier_enabled ? join(" ", slice(local.bucket_names, var.bucket_count, local.total_bucket_count)) : ""
+    gcs_access_key = local.object_tier_enabled ? google_storage_hmac_key.mayascale_hmac[0].access_id : ""
+    gcs_secret_key = local.object_tier_enabled ? google_storage_hmac_key.mayascale_hmac[0].secret : ""
     # Startup wait configuration
     mayascale_startup_wait = var.mayascale_startup_wait != null ? tostring(var.mayascale_startup_wait) : ""
   }) : null # No startup script for node2 (secondary)

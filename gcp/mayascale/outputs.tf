@@ -15,12 +15,12 @@ output "deployment_summary" {
     cluster_name          = local.cluster_name
     performance_policy    = var.performance_policy
     availability_strategy = local.active_policy.availability_strategy
-    target_iops          = local.active_policy.target_write_iops
-    instance_type        = local.selected_machine_type
-    nvme_capacity_gb     = local.active_policy.local_ssd_count * 375 * 2  # Total across both nodes
-    cost_tier           = local.active_policy.capacity_optimization
-    zone_strategy       = local.zone_strategy
-    dual_nic_enabled    = true
+    target_iops           = local.active_policy.target_write_iops
+    instance_type         = local.selected_machine_type
+    nvme_capacity_gb      = local.active_policy.local_ssd_count * 375 * local.node_count # Total across nodes
+    cost_tier             = local.active_policy.capacity_optimization
+    zone_strategy         = local.zone_strategy
+    dual_nic_enabled      = true
   }
 }
 
@@ -42,17 +42,17 @@ output "node1_name" {
 
 output "node2_public_ip" {
   description = "Public IP of node 2"
-  value       = var.assign_public_ip ? google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip : null
+  value       = local.node_count > 1 && var.assign_public_ip ? google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip : null
 }
 
 output "node2_private_ip" {
   description = "Private IP of node 2"
-  value       = google_compute_instance.mayascale_nodes[1].network_interface[0].network_ip
+  value       = local.node_count > 1 ? google_compute_instance.mayascale_nodes[1].network_interface[0].network_ip : ""
 }
 
 output "node2_name" {
   description = "Name of node 2"
-  value       = google_compute_instance.mayascale_nodes[1].name
+  value       = local.node_count > 1 ? google_compute_instance.mayascale_nodes[1].name : ""
 }
 
 output "vip1_address" {
@@ -62,7 +62,7 @@ output "vip1_address" {
 
 output "vip2_address" {
   description = "Secondary VIP address"
-  value       = local.vip_address_2
+  value       = local.node_count > 1 ? local.vip_address_2 : ""
 }
 
 # Node Information - Structured
@@ -79,24 +79,24 @@ output "primary_node" {
 }
 
 output "secondary_node" {
-  description = "Secondary MayaScale storage node information"
-  value = {
+  description = "Secondary MayaScale storage node information (null on single-node)"
+  value = local.node_count > 1 ? {
     name        = google_compute_instance.mayascale_nodes[1].name
     zone        = google_compute_instance.mayascale_nodes[1].zone
     internal_ip = google_compute_instance.mayascale_nodes[1].network_interface[0].network_ip
     backend_ip  = google_compute_instance.mayascale_nodes[1].network_interface[1].network_ip
     external_ip = var.assign_public_ip ? google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip : null
     instance_id = google_compute_instance.mayascale_nodes[1].instance_id
-  }
+  } : null
 }
 
 # Network Configuration
 output "vip_addresses" {
   description = "Virtual IP addresses for client connections"
   value = {
-    primary_vip = local.vip_address
-    secondary_vip = local.vip_address_2
-    active_vips = local.active_policy.local_ssd_count > 1 ? [local.vip_address, local.vip_address_2] : [local.vip_address]
+    primary_vip   = local.vip_address
+    secondary_vip = local.node_count > 1 ? local.vip_address_2 : ""
+    active_vips   = local.node_count > 1 ? [local.vip_address, local.vip_address_2] : [local.vip_address]
   }
 }
 
@@ -112,13 +112,13 @@ output "client_volumes" {
     for i in range(local.active_policy.local_ssd_count) : "data-node-${i + 1}" => {
       # NQN format: mayascale-{cluster_id}-vol-data-node-{n}
       # Odd volumes (1,3,5) use resource_id, even volumes (2,4,6) use peer_resource_id
-      nqn  = "nqn.2019-05.com.zettalane:mayascale-${(i + 1) % 2 == 1 ? random_integer.resource_id.result : random_integer.peer_resource_id.result}-vol-data-node-${i + 1}"
-      port = var.client_nvme_port + i
+      nqn          = "nqn.2019-05.com.zettalane:mayascale-${(i + 1) % 2 == 1 ? random_integer.resource_id.result : random_integer.peer_resource_id.result}-vol-data-node-${i + 1}"
+      port         = var.client_nvme_port + i
       vip_endpoint = "${i % 2 == 0 ? local.vip_address : local.vip_address_2}:${var.client_nvme_port + i}"
-      vip_address = i % 2 == 0 ? local.vip_address : local.vip_address_2
-      size_gb = 375  # Each Local SSD size
-      protocol = var.client_protocol
-      cluster_id = (i + 1) % 2 == 1 ? random_integer.resource_id.result : random_integer.peer_resource_id.result
+      vip_address  = i % 2 == 0 ? local.vip_address : local.vip_address_2
+      size_gb      = 375 # Each Local SSD size
+      protocol     = var.client_protocol
+      cluster_id   = (i + 1) % 2 == 1 ? random_integer.resource_id.result : random_integer.peer_resource_id.result
     }
   } : {}
 }
@@ -152,7 +152,7 @@ output "management_urls" {
   description = "Management interface URLs"
   value = {
     primary_web_ui   = var.assign_public_ip ? "http://${google_compute_instance.mayascale_nodes[0].network_interface[0].access_config[0].nat_ip}:2020" : "Use SSH tunnel: gcloud compute ssh ... -- -L 2020:localhost:2020"
-    secondary_web_ui = var.assign_public_ip ? "http://${google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip}:2020" : "Use SSH tunnel: gcloud compute ssh ... -- -L 2021:localhost:2020"
+    secondary_web_ui = local.node_count <= 1 ? "" : (var.assign_public_ip ? "http://${google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip}:2020" : "Use SSH tunnel: gcloud compute ssh ... -- -L 2021:localhost:2020")
     cluster_metrics  = "http://${local.vip_address}:9090"
   }
 }
@@ -162,7 +162,7 @@ output "ssh_commands" {
   description = "SSH commands to connect to nodes"
   value = {
     primary_node   = var.assign_public_ip ? "ssh mayascale@${google_compute_instance.mayascale_nodes[0].network_interface[0].access_config[0].nat_ip}" : "gcloud compute ssh mayascale@${google_compute_instance.mayascale_nodes[0].name} --zone=${google_compute_instance.mayascale_nodes[0].zone} --project=${var.project_id}"
-    secondary_node = var.assign_public_ip ? "ssh mayascale@${google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip}" : "gcloud compute ssh mayascale@${google_compute_instance.mayascale_nodes[1].name} --zone=${google_compute_instance.mayascale_nodes[1].zone} --project=${var.project_id}"
+    secondary_node = local.node_count <= 1 ? "" : (var.assign_public_ip ? "ssh mayascale@${google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip}" : "gcloud compute ssh mayascale@${google_compute_instance.mayascale_nodes[1].name} --zone=${google_compute_instance.mayascale_nodes[1].zone} --project=${var.project_id}")
   }
 }
 
@@ -173,11 +173,11 @@ output "performance_characteristics" {
     target_iops             = local.active_policy.target_write_iops
     target_read_iops        = local.active_policy.target_read_iops
     nvme_devices_per_node   = local.active_policy.local_ssd_count
-    total_nvme_capacity_tb  = (local.active_policy.local_ssd_count * 375 * 2) / 1024  # Total TB
+    total_nvme_capacity_tb  = (local.active_policy.local_ssd_count * 375 * local.node_count) / 1024 # Total TB
     instance_type           = local.selected_machine_type
     backend_network_enabled = true
-    nvmeof_port            = 4420
-    replication_port       = 8010
+    nvmeof_port             = 4420
+    replication_port        = 8010
   }
 }
 
@@ -191,26 +191,36 @@ output "csi_backend" {
   value = {
     # options.driver -- selects the product/instance (block backend, RWO).
     driver = "mayascale"
-    # Control-plane VIP list (key named for the driver): control failover AND
-    # pool/clusterid/VIP discovery. MayaScale is always 2-node active-active.
-    mayascale = join(",", [local.vip_address, local.vip_address_2])
+    # Control-plane endpoint: 2-node = both VIPs; single-node has no VIP -> node1 IP.
+    mayascale = local.node_count > 1 ? join(",", [local.vip_address, local.vip_address_2]) : local.csi_node1_vip
 
-    # CSI pools per node (created by cluster_mayascale.sh in vg-active-active mode): the
-    # thick VG <cluster>-vg-node{1,2} (driver carves V_FLEX LVs) AND a thin pool
-    # <cluster>-vgpool-node{1,2} inside it (driver carves thin LVs -> sizeless snapshots +
-    # native clones). Same clusterid/vip as the node's VG; the driver discovers each pool's
-    # kind (vg vs thinpool) and routes accordingly.
-    pools = {
-      "${local.cluster_name}-vg-node1"     = { clusterid = random_integer.resource_id.result, vip = local.vip_address }
-      "${local.cluster_name}-vg-node2"     = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
-      "${local.cluster_name}-vgpool-node1" = { clusterid = random_integer.resource_id.result, vip = local.vip_address }
-      "${local.cluster_name}-vgpool-node2" = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
-    }
+    # Pools branch on substrate (zfs* -> zpool data-pool-N; else VG + thinpool) and node
+    # count. Single-node uses clusterid 0 (a local, non-failover resource) + node1 IP.
+    pools = startswith(var.deployment_type, "zfs") ? (
+      local.node_count > 1 ? tomap({
+        "data-pool-1" = { clusterid = random_integer.resource_id.result, vip = local.csi_node1_vip }
+        "data-pool-2" = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
+        }) : tomap({
+        "data-pool-1" = { clusterid = 0, vip = local.csi_node1_vip }
+      })
+      ) : (
+      local.node_count > 1 ? tomap({
+        "${local.cluster_name}-vg-node1"     = { clusterid = random_integer.resource_id.result, vip = local.csi_node1_vip }
+        "${local.cluster_name}-vg-node2"     = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
+        "${local.cluster_name}-vgpool-node1" = { clusterid = random_integer.resource_id.result, vip = local.csi_node1_vip }
+        "${local.cluster_name}-vgpool-node2" = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
+        }) : tomap({
+        "${local.cluster_name}-vg-node1"     = { clusterid = 0, vip = local.csi_node1_vip }
+        "${local.cluster_name}-vgpool-node1" = { clusterid = 0, vip = local.csi_node1_vip }
+      })
+    )
 
     # zone -> data VIP, for the driver's zone-aware topology (zone_cluster_map)
-    zone_cluster_map = {
+    zone_cluster_map = local.node_count > 1 ? {
       (google_compute_instance.mayascale_nodes[0].zone) = local.vip_address
       (google_compute_instance.mayascale_nodes[1].zone) = local.vip_address_2
+      } : {
+      (google_compute_instance.mayascale_nodes[0].zone) = local.csi_node1_vip
     }
   }
 }
@@ -220,19 +230,19 @@ output "network_architecture" {
   description = "Professional dual-NIC network configuration"
   value = {
     frontend_network = {
-      name = "default"
-      purpose = "Client NVMe-oF connections"
-      port = 4420
-      primary_ip = google_compute_instance.mayascale_nodes[0].network_interface[0].network_ip
-      secondary_ip = google_compute_instance.mayascale_nodes[1].network_interface[0].network_ip
+      name         = "default"
+      purpose      = "Client NVMe-oF connections"
+      port         = 4420
+      primary_ip   = google_compute_instance.mayascale_nodes[0].network_interface[0].network_ip
+      secondary_ip = local.node_count > 1 ? google_compute_instance.mayascale_nodes[1].network_interface[0].network_ip : ""
     }
     backend_network = {
-      name = google_compute_network.mayascale_backend.name
-      purpose = "Server-side replication traffic"
-      port = 8010
-      cidr = "10.200.0.0/24"
-      primary_ip = google_compute_instance.mayascale_nodes[0].network_interface[1].network_ip
-      secondary_ip = google_compute_instance.mayascale_nodes[1].network_interface[1].network_ip
+      name         = google_compute_network.mayascale_backend.name
+      purpose      = "Server-side replication traffic"
+      port         = 8010
+      cidr         = "10.200.0.0/24"
+      primary_ip   = google_compute_instance.mayascale_nodes[0].network_interface[1].network_ip
+      secondary_ip = local.node_count > 1 ? google_compute_instance.mayascale_nodes[1].network_interface[1].network_ip : ""
     }
   }
 }
@@ -263,7 +273,7 @@ output "placement_policy_name" {
     (var.placement_policy_name != "" ?
       var.placement_policy_name :
       (length(google_compute_resource_policy.mayascale_placement_policy) > 0 ?
-        google_compute_resource_policy.mayascale_placement_policy[0].name : "")) :
+    google_compute_resource_policy.mayascale_placement_policy[0].name : "")) :
     ""
   )
 }
@@ -290,23 +300,38 @@ output "placement_client_slots" {
 output "deployment_info" {
   description = "Structured deployment information for automation scripts"
   value = {
-    cluster_name        = local.cluster_name
-    node_count          = 2
-    region              = var.region
-    zone                = var.zone
-    machine_type        = local.selected_machine_type
-    node1_name          = google_compute_instance.mayascale_nodes[0].name
-    node1_zone          = google_compute_instance.mayascale_nodes[0].zone
-    node1_external_ip   = var.assign_public_ip ? google_compute_instance.mayascale_nodes[0].network_interface[0].access_config[0].nat_ip : null
-    node1_internal_ip   = google_compute_instance.mayascale_nodes[0].network_interface[0].network_ip
-    node2_name          = google_compute_instance.mayascale_nodes[1].name
-    node2_zone          = google_compute_instance.mayascale_nodes[1].zone
-    node2_external_ip   = var.assign_public_ip ? google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip : null
-    node2_internal_ip   = google_compute_instance.mayascale_nodes[1].network_interface[0].network_ip
-    vip_primary         = local.vip_address
-    vip_secondary       = local.vip_address_2
-    total_nvme_count    = local.active_policy.local_ssd_count * 2
-    total_capacity_gb   = local.active_policy.local_ssd_count * 375 * 2
+    cluster_name      = local.cluster_name
+    node_count        = local.node_count
+    region            = var.region
+    zone              = var.zone
+    machine_type      = local.selected_machine_type
+    node1_name        = google_compute_instance.mayascale_nodes[0].name
+    node1_zone        = google_compute_instance.mayascale_nodes[0].zone
+    node1_external_ip = var.assign_public_ip ? google_compute_instance.mayascale_nodes[0].network_interface[0].access_config[0].nat_ip : null
+    node1_internal_ip = google_compute_instance.mayascale_nodes[0].network_interface[0].network_ip
+    node2_name        = local.node_count > 1 ? google_compute_instance.mayascale_nodes[1].name : ""
+    node2_zone        = local.node_count > 1 ? google_compute_instance.mayascale_nodes[1].zone : ""
+    node2_external_ip = local.node_count > 1 && var.assign_public_ip ? google_compute_instance.mayascale_nodes[1].network_interface[0].access_config[0].nat_ip : null
+    node2_internal_ip = local.node_count > 1 ? google_compute_instance.mayascale_nodes[1].network_interface[0].network_ip : ""
+    vip_primary       = local.vip_address
+    vip_secondary     = local.node_count > 1 ? local.vip_address_2 : ""
+    total_nvme_count  = local.active_policy.local_ssd_count * local.node_count
+    total_capacity_gb = local.active_policy.local_ssd_count * 375 * local.node_count
   }
 }
 
+
+# Object storage (objbacker cold tier) -- empty/null unless bucket_count > 0.
+output "buckets_by_node" {
+  description = "Cold-tier buckets split per node: first bucket_count are node1's, the rest node2's, so each node builds its own objbacker pool"
+  value = local.object_tier_enabled ? {
+    node1 = slice(local.bucket_names, 0, var.bucket_count)
+    node2 = slice(local.bucket_names, var.bucket_count, local.total_bucket_count)
+  } : null
+}
+
+output "gcs_access_key" {
+  description = "HMAC access ID for the objbacker cold tier (GCS S3-compat)"
+  value       = local.object_tier_enabled ? google_storage_hmac_key.mayascale_hmac[0].access_id : ""
+  sensitive   = true
+}
