@@ -86,6 +86,12 @@ DESTROY_MODE="false"
 CLUSTER_TYPE="single"
 USE_SPOT="false"
 ASSIGN_PUBLIC_IP="true"
+# Explicit image handoff (--image-id / --image-project / --image-family). Empty = use the
+# cloud's Marketplace listing. Set = a specific image (community edition, or any private
+# build): no publisher plan, so the Marketplace plan-terms check is skipped.
+IMAGE_ID=""        # azure: full gallery image id  |  aws: AMI id
+IMAGE_PROJECT=""   # gcp: source_image_project
+IMAGE_FAMILY=""    # gcp: source_image_family
 
 # Tier to machine type mapping
 declare -A GCP_TIERS=( ["basic"]="n2-standard-4" ["standard"]="n2-standard-8" ["performance"]="n2-standard-16" ["ultra"]="n2-standard-32" )
@@ -139,6 +145,15 @@ COMMON OPTIONS:
                               Auto-enables Private Google Access on the
                               subnet (GCP) and IAP tunnel for SSH.
                               (default: public IPs ON for direct SSH)
+    --dev IMAGE               Deploy an internal build instead of the Marketplace
+                              listing; the value's shape picks the cloud:
+                                azure  /subscriptions/.../versions/latest
+                                aws    ami-0996832d09c19fc85
+                                gcp    <project>/<family>
+                              Skips the Azure Marketplace plan-terms check.
+    --image-id ID             Explicit image, azure gallery image id or aws AMI id
+    --image-project PROJECT   GCP source_image_project (with --image-family)
+    --image-family FAMILY     GCP source_image_family
     --skip-deploy             Skip terraform apply, validate existing deployment
     --skip-client             Skip client deployment, storage-only validation
     -d, --destroy             Destroy all resources and exit
@@ -247,6 +262,33 @@ while [[ $# -gt 0 ]]; do
         --skip-client)
             SKIP_CLIENT="true"
             shift
+            ;;
+        --image-id)
+            # Explicit image, bypassing the Marketplace listing: Azure = full gallery
+            # image id, AWS = AMI id. A custom/community image carries no publisher
+            # plan, so the plan-terms check below is skipped when this is set.
+            IMAGE_ID="$2"; shift 2
+            ;;
+        --image-project)
+            IMAGE_PROJECT="$2"; shift 2      # GCP: source_image_project
+            ;;
+        --image-family)
+            IMAGE_FAMILY="$2"; shift 2       # GCP: source_image_family
+            ;;
+        --dev)
+            # Shorthand for an internal build -- one flag, any cloud. The value's shape
+            # says which: an /subscriptions/... path is an Azure gallery image id,
+            # ami-* is an AWS AMI, project/family is GCP.
+            #   --dev /subscriptions/.../galleries/zettalaneDev/images/mayanas19/versions/latest
+            #   --dev zettalane-dev/mayanas-devel
+            #   --dev ami-0996832d09c19fc85
+            case "$2" in
+                /*)            IMAGE_ID="$2" ;;
+                ami-*)         IMAGE_ID="$2" ;;
+                */*)           IMAGE_PROJECT="${2%%/*}"; IMAGE_FAMILY="${2#*/}" ;;
+                *)  echo "ERROR: --dev wants an azure image id (/subscriptions/...), an AWS ami-*, or gcp <project>/<family> (got '$2')"; usage ;;
+            esac
+            shift 2
             ;;
         -d|--destroy)
             DESTROY_MODE="true"
@@ -380,13 +422,14 @@ case "$CLOUD" in
         # Customer's subscription must accept plan terms or terraform apply
         # fails with "Marketplace purchase eligibility check returned errors".
         # Hard-coded to match the module's source_image_reference + plan block.
-        # Skip the check when dev-images.sh has injected a no-plan dev image
-        # — those don't go through Marketplace, so terms acceptance is moot.
+        # Skipped when an explicit image is handed in (--image-id / --dev: community
+        # edition, a dev build, any private gallery image). Those don't go through
+        # Marketplace and carry no publisher plan, so terms acceptance is moot.
         AZURE_PLAN_PUB="zettalane_systems-5254599"
         AZURE_PLAN_OFFER="mayanas-cloud-ent"
         AZURE_PLAN_NAME="mayanas-cloud-ent"
-        if grep -q "^# DEV-IMAGE-OVERRIDE-BEGIN$" "$0"; then
-            log "Dev-image override active (no-plan zettalaneDev image) — skipping Marketplace plan-terms check"
+        if [ -n "$IMAGE_ID" ]; then
+            log "Explicit image (no publisher plan) — skipping Marketplace plan-terms check"
             ACCEPTED="True"
         else
             AZURE_SUB_ID_CHECK="${PROJECT_ID:-$(az account show --query id -o tsv 2>/dev/null || echo "")}"
@@ -728,6 +771,8 @@ use_spot_vms = $USE_SPOT
 force_destroy_buckets = true
 mayanas_startup_wait = 30
 assign_public_ip = $ASSIGN_PUBLIC_IP
+$([ -n "$IMAGE_PROJECT" ] && echo "source_image_project = \"$IMAGE_PROJECT\"")
+$([ -n "$IMAGE_FAMILY" ]  && echo "source_image_family = \"$IMAGE_FAMILY\"")
 
 # Performance test share configuration 
 shares = [
@@ -752,6 +797,7 @@ use_spot_instance = $USE_SPOT
 ssh_cidr_blocks = ["0.0.0.0/0"]
 force_destroy_buckets = true
 assign_public_ip = $ASSIGN_PUBLIC_IP
+$([ -n "$IMAGE_ID" ] && echo "ami_id = \"$IMAGE_ID\"")
 
 # Performance test share configuration
 shares = [
@@ -786,6 +832,7 @@ ssh_cidr_blocks = ["0.0.0.0/0"]
 assign_public_ip = $ASSIGN_PUBLIC_IP
 mayanas_startup_wait = 30
 $([ -n "$SSH_PUBLIC_KEY" ] && echo "ssh_public_key = \"$SSH_PUBLIC_KEY\"")
+$([ -n "$IMAGE_ID" ] && echo "vm_image_id = \"$IMAGE_ID\"")
 
 # Performance test share configuration
 shares = [
