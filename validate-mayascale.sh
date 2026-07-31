@@ -105,6 +105,12 @@ VG_MODE="false"    # --fsx vg: LVM VG on MD-RAID for Kubernetes CSI (vg-active-a
 CSI_MODE="false"   # --csi [mayanas|mayascale]: stage CSI (csi_backend.json + scripts) regardless of fsx substrate
 DEPLOY_TYPE_OVERRIDE="" # --fsx zfs-single|vg-single: single-node deployment_type override (azure only)
 CSI_DRIVER="mayascale"  # CSI product when --csi: mayascale=block/zvol, mayanas=file/NFS
+# Explicit image handoff (--image-id / --image-project / --image-family). Empty = use the
+# cloud's Marketplace listing. Set = a specific image (community edition, or any private
+# build): no publisher plan, so the Marketplace plan-terms check is skipped.
+IMAGE_ID=""        # azure: full gallery image id  |  aws: AMI id
+IMAGE_PROJECT=""   # gcp: source_image_project
+IMAGE_FAMILY=""    # gcp: source_image_family
 ENABLE_COLOCATION="false" # --colocation: opt-in compact placement group (zonal only); OFF by default (functional tests need no rack locality + avoids placement-policy lifecycle friction)
 CLUSTER_SLOT="0"   # --cluster-slot N: deterministic VIP partition (+ Azure backend subnet) for multi-pair in one shared VNet/VPC; 0=standalone (random VIP). All clouds: VIP. Azure also: backend /24.
 
@@ -386,6 +392,33 @@ while [[ $# -gt 0 ]]; do
             ENABLE_COLOCATION="true"   # opt-in compact placement group (zonal only)
             shift
             ;;
+        --image-id)
+            # Explicit image, bypassing the Marketplace listing: Azure = full gallery
+            # image id, AWS = AMI id. A custom/community image carries no publisher
+            # plan, so the plan-terms check below is skipped when this is set.
+            IMAGE_ID="$2"; shift 2
+            ;;
+        --image-project)
+            IMAGE_PROJECT="$2"; shift 2      # GCP: source_image_project
+            ;;
+        --image-family)
+            IMAGE_FAMILY="$2"; shift 2       # GCP: source_image_family
+            ;;
+        --dev)
+            # Shorthand for an internal build -- one flag, any cloud. The value's shape
+            # says which: an /subscriptions/... path is an Azure gallery image id,
+            # ami-* is an AWS AMI, project/family is GCP. Replaces patching this script.
+            #   --dev /subscriptions/.../galleries/zettalaneDev/images/mayascale19/versions/latest
+            #   --dev zettalane-dev/mayascale-devel
+            #   --dev ami-0996832d09c19fc85
+            case "$2" in
+                /*)            IMAGE_ID="$2" ;;
+                ami-*)         IMAGE_ID="$2" ;;
+                */*)           IMAGE_PROJECT="${2%%/*}"; IMAGE_FAMILY="${2#*/}" ;;
+                *)  echo "ERROR: --dev wants an azure image id (/subscriptions/...), an AWS ami-*, or gcp <project>/<family> (got '$2')"; usage ;;
+            esac
+            shift 2
+            ;;
         -d|--destroy)
             DESTROY_MODE="true"
             shift
@@ -425,14 +458,14 @@ if [[ ! "$BUCKET_COUNT" =~ ^[0-4]$ ]]; then
     fail "--bucket-count must be between 0 and 4 (0 = no object cold tier)"
 fi
 
-# The objbacker cold tier: azure + gcp mayascale provision buckets (aws does not).
-if [ "$BUCKET_COUNT" -gt 0 ] && [ "$CLOUD" != "azure" ] && [ "$CLOUD" != "gcp" ]; then
-    fail "--bucket-count is only supported on azure/gcp (got: $CLOUD)"
+# The objbacker cold tier: azure + gcp + aws mayascale provision buckets.
+if [ "$BUCKET_COUNT" -gt 0 ] && [ "$CLOUD" != "azure" ] && [ "$CLOUD" != "gcp" ] && [ "$CLOUD" != "aws" ]; then
+    fail "--bucket-count is only supported on azure/gcp/aws (got: $CLOUD)"
 fi
 
-# Single-node (zfs-single / vg-single): azure + gcp mayascale.
-if [ -n "$DEPLOY_TYPE_OVERRIDE" ] && [ "$CLOUD" != "azure" ] && [ "$CLOUD" != "gcp" ]; then
-    fail "--fsx $DEPLOY_TYPE_OVERRIDE (single-node) is only supported on azure/gcp (got: $CLOUD)"
+# Single-node (zfs-single / vg-single): azure + gcp + aws mayascale.
+if [ -n "$DEPLOY_TYPE_OVERRIDE" ] && [ "$CLOUD" != "azure" ] && [ "$CLOUD" != "gcp" ] && [ "$CLOUD" != "aws" ]; then
+    fail "--fsx $DEPLOY_TYPE_OVERRIDE (single-node) is only supported on azure/gcp/aws (got: $CLOUD)"
 fi
 
 # CSI needs a provisionable substrate. The default (active-active = MD-RAID block whose
@@ -517,7 +550,7 @@ case "$CLOUD" in
         # Product code matches aws/mayascale/variables.tf:mayascale_product_code.
         # Skip the check if the variable still holds the placeholder (means
         # MayaScale isn't published to AWS Marketplace yet).
-        MAYASCALE_PRODUCT_CODE="PLACEHOLDER_MAYASCALE_PRODUCT_CODE"
+        MAYASCALE_PRODUCT_CODE="9jnrdw5qr5p4m6pp1s57np4em"
         if [ "$MAYASCALE_PRODUCT_CODE" = "PLACEHOLDER_MAYASCALE_PRODUCT_CODE" ]; then
             echo "WARN: MayaScale isn't published on AWS Marketplace yet"
             echo "      (mayascale_product_code is still a placeholder in"
@@ -563,13 +596,14 @@ case "$CLOUD" in
         # terraform apply fails with "Marketplace purchase eligibility check
         # returned errors". Hard-coded to match the module's
         # source_image_reference + plan block.
-        # Skip the check when dev-images.sh has injected a no-plan dev image
-        # — those don't go through Marketplace, so terms acceptance is moot.
+        # Skipped when an explicit image is handed in (--image-id: community edition,
+        # a dev build, any private gallery image). Those don't go through Marketplace
+        # and carry no publisher plan, so terms acceptance is moot.
         AZURE_PLAN_PUB="zettalane_systems-5254599"
         AZURE_PLAN_OFFER="mayascale-cloud-ent"
         AZURE_PLAN_NAME="mayascale-cloud-ent"
-        if grep -q "^# DEV-IMAGE-OVERRIDE-BEGIN$" "$0"; then
-            log "Dev-image override active (no-plan zettalaneDev image) — skipping Marketplace plan-terms check"
+        if [ -n "$IMAGE_ID" ]; then
+            log "Explicit image (no publisher plan) — skipping Marketplace plan-terms check"
             ACCEPTED="True"
         else
             AZURE_SUB_ID_CHECK="${PROJECT_ID:-$(az account show --query id -o tsv 2>/dev/null || echo "")}"
@@ -924,6 +958,8 @@ bucket_count = $BUCKET_COUNT
 force_destroy_buckets = true
 mayascale_startup_wait=15
 enable_colocation = $ENABLE_COLOCATION
+$([ -n "$IMAGE_PROJECT" ] && echo "source_image_project = \"$IMAGE_PROJECT\"")
+$([ -n "$IMAGE_FAMILY" ]  && echo "source_image_family = \"$IMAGE_FAMILY\"")
 EOF
             # Reserve client slot in placement policy for colocation
             if [ "$ENABLE_COLOCATION" = "true" ]; then
@@ -940,9 +976,12 @@ deployment_type = "${DEPLOY_TYPE_OVERRIDE:-$([ "$VG_MODE" = "true" ] && echo "vg
 cluster_slot = $CLUSTER_SLOT
 instance_type_override = "$RESOLVED_MACHINE_TYPE"
 use_spot_instances = $USE_SPOT
+bucket_count = $BUCKET_COUNT
+force_destroy_buckets = true
 assign_public_ip = $ASSIGN_PUBLIC_IP
 ssh_cidr_blocks = ["0.0.0.0/0"]
 availability_zone = "$AWS_AZ"
+$([ -n "$IMAGE_ID" ] && echo "ami_id = \"$IMAGE_ID\"")
 EOF
             # AWS placement group auto-created for zonal non-spot
             ;;
@@ -960,6 +999,7 @@ use_spot_instances = $USE_SPOT
 assign_public_ip = $ASSIGN_PUBLIC_IP
 $([ -n "$SSH_PUBLIC_KEY" ] && echo "ssh_public_key = \"$SSH_PUBLIC_KEY\"")
 mayascale_startup_wait= 10
+$([ -n "$IMAGE_ID" ] && echo "vm_image_id=\"$IMAGE_ID\"")
 EOF
             if [ -n "$RESOURCE_GROUP" ]; then
                 echo "resource_group_name = \"$RESOURCE_GROUP\"" >> terraform.tfvars
@@ -1493,18 +1533,33 @@ if [ "$SKIP_CLIENT" = "false" ]; then
             else
                 warn "could not build csi_backend.json -- not staged (need jq + a valid csi_backend output)"
             fi
-            for s in csi-client-setup.sh csi-fio-test.sh csi-fio-block-test.sh csi-expand-test.sh csi-sanity-test.sh csi-sanity-multi.sh; do
-                if [ -f "$SCRIPT_DIR/$s" ]; then
-                    copy_to_client "$SCRIPT_DIR/$s" "$s"
-                    run_client_ssh "chmod +x ~/$s"
-                    success "Staged $s on client"
-                else
-                    warn "$s not found: $SCRIPT_DIR/$s"
-                fi
+            # csi-client-setup.sh is REQUIRED (it installs the driver). The csi-*-test
+            # scripts are INTERNAL CSI sanity tools, not part of this repo -- stage them
+            # when present, stay quiet when not, and only advertise the ones actually
+            # staged. Warning about them and then printing "Then: ./csi-fio-test.sh" for
+            # a file we just failed to copy is worse than saying nothing.
+            if [ -f "$SCRIPT_DIR/csi-client-setup.sh" ]; then
+                copy_to_client "$SCRIPT_DIR/csi-client-setup.sh" csi-client-setup.sh
+                run_client_ssh "chmod +x ~/csi-client-setup.sh"
+                success "Staged csi-client-setup.sh on client"
+            else
+                warn "csi-client-setup.sh not found: $SCRIPT_DIR/csi-client-setup.sh"
+            fi
+            CSI_TESTS_STAGED=""
+            for s in csi-fio-test.sh csi-fio-block-test.sh csi-expand-test.sh csi-sanity-test.sh csi-sanity-multi.sh; do
+                [ -f "$SCRIPT_DIR/$s" ] || continue
+                copy_to_client "$SCRIPT_DIR/$s" "$s"
+                run_client_ssh "chmod +x ~/$s"
+                success "Staged $s on client"
+                CSI_TESTS_STAGED="$CSI_TESTS_STAGED $s"
             done
             log "On client: sudo ./csi-client-setup.sh --backend-json ~/csi_backend.json --image-tar <img.tar>"
-            log "Then:      sudo ./csi-fio-test.sh       --backend-json ~/csi_backend.json   # filesystem (mixed randrw)"
-            log "Raw block: sudo ./csi-fio-block-test.sh --backend-json ~/csi_backend.json   # separate r/w IOPS + latency"
+            case "$CSI_TESTS_STAGED" in *csi-fio-test.sh*)
+                log "Then:      sudo ./csi-fio-test.sh       --backend-json ~/csi_backend.json   # filesystem (mixed randrw)" ;;
+            esac
+            case "$CSI_TESTS_STAGED" in *csi-fio-block-test.sh*)
+                log "Raw block: sudo ./csi-fio-block-test.sh --backend-json ~/csi_backend.json   # separate r/w IOPS + latency" ;;
+            esac
             if [ "$FSX_MODE" = "true" ]; then
                 log "Other protocol: same cluster also serves $CSI_OTHER -- redo client-setup + tests with --backend-json ~/csi_backend_$CSI_OTHER.json"
             fi
