@@ -61,8 +61,8 @@ output "vip_addresses" {
   description = "Virtual IP addresses for client connections"
   value = {
     primary_vip   = local.vip_address
-    secondary_vip = local.vip_address_2
-    active_vips   = local.selected_policy.nvme_device_count > 1 ? [local.vip_address, local.vip_address_2] : [local.vip_address]
+    secondary_vip = local.node_count > 1 ? local.vip_address_2 : ""
+    active_vips   = local.node_count > 1 ? (local.selected_policy.nvme_device_count > 1 ? [local.vip_address, local.vip_address_2] : [local.vip_address]) : [local.csi_node1_vip]
   }
 }
 
@@ -95,8 +95,8 @@ output "node1_instance_id" {
 }
 
 output "node2_instance_id" {
-  description = "Node2 EC2 instance ID"
-  value       = aws_instance.mayascale_node2.id
+  description = "Node2 EC2 instance ID (empty on single-node)"
+  value       = local.node_count > 1 ? aws_instance.mayascale_node2[0].id : ""
 }
 
 output "node1_public_ip" {
@@ -115,18 +115,18 @@ output "node1_name" {
 }
 
 output "node2_public_ip" {
-  description = "Node2 public IP address"
-  value       = var.assign_public_ip ? aws_instance.mayascale_node2.public_ip : null
+  description = "Node2 public IP address (null on single-node)"
+  value       = local.node_count > 1 && var.assign_public_ip ? aws_instance.mayascale_node2[0].public_ip : null
 }
 
 output "node2_private_ip" {
-  description = "Node2 private IP address"
-  value       = aws_instance.mayascale_node2.private_ip
+  description = "Node2 private IP address (empty on single-node)"
+  value       = local.node_count > 1 ? aws_instance.mayascale_node2[0].private_ip : ""
 }
 
 output "node2_name" {
-  description = "Node2 instance name"
-  value       = aws_instance.mayascale_node2.tags["Name"]
+  description = "Node2 instance name (empty on single-node)"
+  value       = local.node_count > 1 ? aws_instance.mayascale_node2[0].tags["Name"] : ""
 }
 
 output "vip1_address" {
@@ -135,8 +135,8 @@ output "vip1_address" {
 }
 
 output "vip2_address" {
-  description = "Secondary VIP address"
-  value       = local.vip_address_2
+  description = "Secondary VIP address (empty on single-node)"
+  value       = local.node_count > 1 ? local.vip_address_2 : ""
 }
 
 # Availability Zones
@@ -172,7 +172,7 @@ output "ssh_commands" {
   description = "SSH commands to connect to nodes"
   value = {
     node1 = var.assign_public_ip ? "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node1.public_ip}" : "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node1.private_ip}"
-    node2 = var.assign_public_ip ? "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node2.public_ip}" : "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node2.private_ip}"
+    node2 = local.node_count <= 1 ? "" : (var.assign_public_ip ? "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node2[0].public_ip}" : "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${aws_instance.mayascale_node2[0].private_ip}")
   }
 }
 
@@ -252,33 +252,54 @@ output "csi_backend" {
   value = {
     # options.driver -- selects the product/instance (block backend, RWO).
     driver = "mayascale"
-    # Control-plane VIP list (key named for the driver): control failover AND
-    # pool/clusterid/VIP discovery. MayaScale is always 2-node active-active.
-    mayascale = join(",", [local.vip_address, local.vip_address_2])
+    # Control-plane endpoint: 2-node = both VIPs; single-node has no VIP -> node1 private IP.
+    mayascale = local.node_count > 1 ? join(",", [local.vip_address, local.vip_address_2]) : local.csi_node1_vip
 
-    # CSI pools per node, created by cluster_mayascale.sh; the driver discovers each pool's
-    # kind (V_VG / V_THINPOOL / V_ZPOOL) and routes accordingly. Branch on deployment_type:
+    # CSI pools, created by cluster_mayascale.sh (2-node) / standalone_mayascale.sh (single);
+    # the driver discovers each pool's kind (V_VG / V_THINPOOL / V_ZPOOL) and routes accordingly.
+    # Branch on substrate (zfs* -> zpool data-pool-N; else VG + thinpool) and node count:
     #   vg-active-active  -> thick VG <cluster>-vg-node{1,2} (driver carves V_FLEX LVs) AND a
     #                        thin pool <cluster>-vgpool-node{1,2} inside it (thin LVs).
     #   zfs-active-active -> one zpool per node, data-pool-{1,2} (driver carves zvols/datasets).
-    # tomap() so both ternary branches share a type (different key counts otherwise).
-    pools = var.deployment_type == "zfs-active-active" ? tomap({
-      "data-pool-1" = { clusterid = random_integer.resource_id.result, vip = local.vip_address }
-      "data-pool-2" = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
-    }) : tomap({
-      "${local.cluster_name}-vg-node1"     = { clusterid = random_integer.resource_id.result, vip = local.vip_address }
-      "${local.cluster_name}-vg-node2"     = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
-      "${local.cluster_name}-vgpool-node1" = { clusterid = random_integer.resource_id.result, vip = local.vip_address }
-      "${local.cluster_name}-vgpool-node2" = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
-    })
+    # Single-node uses clusterid 0 (a local, non-failover resource) + node1 IP.
+    # tomap() so all ternary branches share a type (different key counts otherwise).
+    pools = startswith(var.deployment_type, "zfs") ? (
+      local.node_count > 1 ? tomap({
+        "data-pool-1" = { clusterid = random_integer.resource_id.result, vip = local.csi_node1_vip }
+        "data-pool-2" = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
+        }) : tomap({
+        "data-pool-1" = { clusterid = 0, vip = local.csi_node1_vip }
+      })
+      ) : (
+      local.node_count > 1 ? tomap({
+        "${local.cluster_name}-vg-node1"     = { clusterid = random_integer.resource_id.result, vip = local.csi_node1_vip }
+        "${local.cluster_name}-vg-node2"     = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
+        "${local.cluster_name}-vgpool-node1" = { clusterid = random_integer.resource_id.result, vip = local.csi_node1_vip }
+        "${local.cluster_name}-vgpool-node2" = { clusterid = random_integer.peer_resource_id.result, vip = local.vip_address_2 }
+        }) : tomap({
+        "${local.cluster_name}-vg-node1"     = { clusterid = 0, vip = local.csi_node1_vip }
+        "${local.cluster_name}-vgpool-node1" = { clusterid = 0, vip = local.csi_node1_vip }
+      })
+    )
 
     # zone -> data VIP, for the driver's zone-aware topology (zone_cluster_map).
     # AWS AZ names (topology.kubernetes.io/zone on EKS nodes) map to the owning node's VIP.
-    zone_cluster_map = {
+    zone_cluster_map = local.node_count > 1 ? {
       (local.node1_az) = local.vip_address
       (local.node2_az) = local.vip_address_2
+      } : {
+      (local.node1_az) = local.csi_node1_vip
     }
   }
+}
+
+# Object storage (objbacker cold tier) -- null unless bucket_count > 0.
+output "buckets_by_node" {
+  description = "Cold-tier buckets split per node: first bucket_count are node1's, the rest node2's, so each node builds its own objbacker pool"
+  value = local.object_tier_enabled ? {
+    node1 = slice(local.bucket_names, 0, var.bucket_count)
+    node2 = slice(local.bucket_names, var.bucket_count, local.total_bucket_count)
+  } : null
 }
 
 # Module Metadata
@@ -297,22 +318,22 @@ output "deployment_info" {
   description = "Structured deployment information for automation scripts"
   value = {
     cluster_name      = local.cluster_name
-    node_count        = 2
+    node_count        = local.node_count
     region            = var.region
     primary_az        = local.node1_az
-    secondary_az      = local.node2_az
+    secondary_az      = local.node_count > 1 ? local.node2_az : ""
     machine_type      = local.selected_instance_type
     node1_name        = aws_instance.mayascale_node1.id
     node1_az          = aws_instance.mayascale_node1.availability_zone
     node1_external_ip = var.assign_public_ip ? aws_instance.mayascale_node1.public_ip : null
     node1_internal_ip = aws_instance.mayascale_node1.private_ip
-    node2_name        = aws_instance.mayascale_node2.id
-    node2_az          = aws_instance.mayascale_node2.availability_zone
-    node2_external_ip = var.assign_public_ip ? aws_instance.mayascale_node2.public_ip : null
-    node2_internal_ip = aws_instance.mayascale_node2.private_ip
+    node2_name        = local.node_count > 1 ? aws_instance.mayascale_node2[0].id : ""
+    node2_az          = local.node_count > 1 ? aws_instance.mayascale_node2[0].availability_zone : ""
+    node2_external_ip = local.node_count > 1 && var.assign_public_ip ? aws_instance.mayascale_node2[0].public_ip : null
+    node2_internal_ip = local.node_count > 1 ? aws_instance.mayascale_node2[0].private_ip : ""
     vip_primary       = local.vip_address
-    vip_secondary     = local.vip_address_2
-    total_nvme_count  = local.selected_policy.nvme_device_count * 2
+    vip_secondary     = local.node_count > 1 ? local.vip_address_2 : ""
+    total_nvme_count  = local.selected_policy.nvme_device_count * local.node_count
     total_capacity_gb = local.selected_policy.nvme_capacity_gb
   }
 }

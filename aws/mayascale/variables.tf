@@ -8,7 +8,7 @@
 variable "mayascale_product_code" {
   description = "AWS Marketplace product code for MayaScale (used for auto AMI lookup)"
   type        = string
-  default     = "PLACEHOLDER_MAYASCALE_PRODUCT_CODE" # TODO: Update with actual product code before release
+  default     = "9jnrdw5qr5p4m6pp1s57np4em" # MayaScale AWS Marketplace (public); product a13ecb99-dc60-4d2d-8a41-83bf0a79258e
 }
 
 # Core Configuration
@@ -253,8 +253,8 @@ variable "deployment_type" {
   default     = "active-active"
 
   validation {
-    condition     = contains(["active-active", "zfs-active-active", "vg-active-active"], var.deployment_type)
-    error_message = "deployment_type must be 'active-active', 'zfs-active-active', or 'vg-active-active'"
+    condition     = contains(["active-active", "zfs-active-active", "vg-active-active", "zfs-single", "vg-single"], var.deployment_type)
+    error_message = "deployment_type must be one of: active-active, zfs-active-active, vg-active-active, zfs-single, vg-single"
   }
 }
 
@@ -275,6 +275,23 @@ variable "shares" {
     smb_gid      = optional(string, "")
   }))
   default = []
+}
+
+# Object Cold Tier (objbacker) Configuration
+variable "bucket_count" {
+  description = "S3 buckets per node for the objbacker cold tier (tenant datasets replicated off the local-NVMe hot pool). 0 = no object storage (default). MayaScale is a pair, so bucket_count * 2 buckets total: first bucket_count are node1's, the rest node2's. Single-node deployments create just bucket_count buckets."
+  type        = number
+  default     = 0
+  validation {
+    condition     = var.bucket_count >= 0 && var.bucket_count <= 16
+    error_message = "bucket_count must be 0-16."
+  }
+}
+
+variable "force_destroy_buckets" {
+  description = "Allow terraform destroy to delete non-empty cold-tier buckets."
+  type        = bool
+  default     = false
 }
 
 # System Startup Configuration

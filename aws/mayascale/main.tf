@@ -155,6 +155,18 @@ locals {
   # Cluster naming
   cluster_name = var.cluster_name != "" ? var.cluster_name : "mayascale-${random_id.suffix.hex}"
 
+  # node_count derived from deployment_type: *-single -> 1, else 2 (active-active pair).
+  node_count = endswith(var.deployment_type, "-single") ? 1 : 2
+
+  # Single-node has no VIP -> the control/data endpoint is node1's primary private IP.
+  csi_node1_vip = local.node_count > 1 ? local.vip_address : aws_instance.mayascale_node1.private_ip
+
+  # objbacker cold tier: pair holds bucket_count*2 (node1's first, node2's rest); single = 1x.
+  # Auth uses the instance role (unconditional profile) -> no access/secret keys.
+  object_tier_enabled = var.bucket_count > 0
+  total_bucket_count  = local.node_count > 1 ? var.bucket_count * 2 : var.bucket_count
+  bucket_names        = [for b in aws_s3_bucket.mayascale_data : b.id]
+
   # Instance type selection (user override or auto-selected from performance policy)
   selected_instance_type = var.instance_type_override != "" ? var.instance_type_override : local.selected_policy.instance_type
 
@@ -312,6 +324,74 @@ resource "aws_iam_instance_profile" "mayascale_profile" {
   tags = local.common_tags
 }
 
+# objbacker cold tier: S3 buckets tenant datasets replicate onto from the local-NVMe hot pool.
+# Nothing created unless bucket_count > 0. Auth is the instance role (no access/secret keys).
+resource "aws_s3_bucket" "mayascale_data" {
+  count = local.total_bucket_count
+
+  bucket        = "${local.cluster_name}-data-${count.index}-${random_id.suffix.hex}"
+  force_destroy = var.force_destroy_buckets
+
+  tags = merge(local.common_tags, {
+    Name            = "${local.cluster_name}-data-${count.index}"
+    Purpose         = "mayascale-cold-tier"
+    BucketIndex     = tostring(count.index)
+    node_assignment = count.index < var.bucket_count ? "node1" : "node2"
+  })
+}
+
+# S3 bucket server-side encryption (AES256)
+resource "aws_s3_bucket_server_side_encryption_configuration" "mayascale_data_encryption" {
+  count = local.total_bucket_count
+
+  bucket = aws_s3_bucket.mayascale_data[count.index].id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# S3 bucket public access block (lock down all public access)
+resource "aws_s3_bucket_public_access_block" "mayascale_data_pab" {
+  count = local.total_bucket_count
+
+  bucket = aws_s3_bucket.mayascale_data[count.index].id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# S3 access policy attached to the instance role (only when the cold tier is enabled).
+resource "aws_iam_role_policy" "mayascale_s3" {
+  count = local.object_tier_enabled ? 1 : 0
+  name  = "${local.cluster_name}-s3-policy"
+  role  = aws_iam_role.mayascale_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:GetBucketLocation"
+        ]
+        Resource = concat(
+          aws_s3_bucket.mayascale_data[*].arn,
+          [for b in aws_s3_bucket.mayascale_data : "${b.arn}/*"]
+        )
+      }
+    ]
+  })
+}
+
 # Security Group
 resource "aws_security_group" "mayascale_sg" {
   name        = "${local.cluster_name}-sg"
@@ -435,9 +515,9 @@ resource "aws_route_table_association" "backend_node1" {
   route_table_id = aws_route_table.backend[0].id
 }
 
-# Associate route table with backend node2 subnet (cross-AZ only)
+# Associate route table with backend node2 subnet (cross-AZ only; never on single-node)
 resource "aws_route_table_association" "backend_node2" {
-  count          = local.selected_policy.availability_strategy == "cross-az" ? 1 : 0
+  count          = (local.selected_policy.availability_strategy == "cross-az" && local.node_count > 1) ? 1 : 0
   subnet_id      = aws_subnet.backend_node2[0].id
   route_table_id = aws_route_table.backend[0].id
 }
@@ -458,9 +538,9 @@ resource "aws_subnet" "backend_node1" {
   })
 }
 
-# Backend subnet for node2 (only for cross-AZ, shares node1 subnet for same-AZ)
+# Backend subnet for node2 (only for cross-AZ, shares node1 subnet for same-AZ; never on single-node)
 resource "aws_subnet" "backend_node2" {
-  count             = local.selected_policy.availability_strategy == "cross-az" ? 1 : 0
+  count             = (local.selected_policy.availability_strategy == "cross-az" && local.node_count > 1) ? 1 : 0
   vpc_id            = aws_vpc.backend.id
   cidr_block        = "10.200.0.128/25"
   availability_zone = local.node2_az
@@ -517,6 +597,7 @@ resource "aws_network_interface" "node1_backend" {
 # Zonal: uses same subnet as node1 (backend_node1)
 # Regional: uses separate subnet in node2's AZ (backend_node2)
 resource "aws_network_interface" "node2_backend" {
+  count           = local.node_count > 1 ? 1 : 0
   subnet_id       = local.selected_policy.availability_strategy == "same-az" ? aws_subnet.backend_node1.id : aws_subnet.backend_node2[0].id
   security_groups = [aws_security_group.backend_sg.id]
   private_ips     = [local.backend_node2_ip]
@@ -535,18 +616,20 @@ locals {
     cluster_name       = local.cluster_name
     deployment_type    = var.deployment_type
     node_role          = "node1"
+    node_count         = local.node_count
     vip_address        = local.vip_address
-    vip_address_2      = local.vip_address_2
+    vip_address_2      = local.node_count > 1 ? local.vip_address_2 : ""
     performance_policy = var.performance_policy
-    peer_zone          = local.node2_az
+    peer_zone          = local.node_count > 1 ? local.node2_az : ""
     resource_id        = random_integer.resource_id.result
     peer_resource_id   = random_integer.peer_resource_id.result
     nvme_count         = local.selected_policy.nvme_device_count
-    # Secondary instance IPs (Terraform will create node2 first due to this dependency)
-    secondary_private_ip  = aws_instance.mayascale_node2.private_ip
-    secondary_backend_ip  = local.backend_node2_ip
-    secondary_instance_id = aws_instance.mayascale_node2.id
-    secondary_hostname    = aws_instance.mayascale_node2.private_dns
+    # Secondary instance IPs (Terraform will create node2 first due to this dependency).
+    # Empty on single-node (no node2 resource).
+    secondary_private_ip  = local.node_count > 1 ? aws_instance.mayascale_node2[0].private_ip : ""
+    secondary_backend_ip  = local.node_count > 1 ? local.backend_node2_ip : ""
+    secondary_instance_id = local.node_count > 1 ? aws_instance.mayascale_node2[0].id : ""
+    secondary_hostname    = local.node_count > 1 ? aws_instance.mayascale_node2[0].private_dns : ""
     # Primary backend IP (passed directly like CloudFormation - no circular dependency)
     primary_backend_ip = local.backend_node1_ip
     # Backend network configuration for cross-AZ
@@ -559,13 +642,22 @@ locals {
     ha_data                = var.ha_data ? 1 : 0
     # Share configuration
     shares = jsonencode(var.shares)
+    # objbacker cold tier (empty when bucket_count = 0 -> startup skips it). IAM-role auth:
+    # s3_access_key = role name, s3_secret_key = "" (setup-cold-pool.sh treats empty secret on
+    # aws as "use the instance role").
+    bucket_node1  = local.node_count > 1 ? join(" ", slice(local.bucket_names, 0, var.bucket_count)) : join(" ", local.bucket_names)
+    bucket_node2  = local.node_count > 1 ? join(" ", slice(local.bucket_names, var.bucket_count, local.total_bucket_count)) : ""
+    s3_access_key = local.object_tier_enabled ? aws_iam_role.mayascale_role.name : ""
+    s3_secret_key = ""
     # Startup wait configuration
     mayascale_startup_wait = var.mayascale_startup_wait != null ? tostring(var.mayascale_startup_wait) : ""
   })
 }
 
-# Node2 MayaScale Storage Instance (created first, no startup script)
+# Node2 MayaScale Storage Instance (created first, no startup script).
+# Not created on single-node (*-single) deployments.
 resource "aws_instance" "mayascale_node2" {
+  count                = local.node_count > 1 ? 1 : 0
   ami                  = local.ami_id
   instance_type        = local.selected_instance_type
   key_name             = var.key_pair_name
@@ -691,7 +783,8 @@ resource "aws_network_interface_attachment" "node1_backend" {
 }
 
 resource "aws_network_interface_attachment" "node2_backend" {
-  instance_id          = aws_instance.mayascale_node2.id
-  network_interface_id = aws_network_interface.node2_backend.id
+  count                = local.node_count > 1 ? 1 : 0
+  instance_id          = aws_instance.mayascale_node2[0].id
+  network_interface_id = aws_network_interface.node2_backend[0].id
   device_index         = 1
 }
