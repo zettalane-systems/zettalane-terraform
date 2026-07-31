@@ -85,13 +85,27 @@ done
 
 . /etc/os-release
 
+# apt on Ubuntu clients races apt-daily (the boot-time auto-update holds the apt
+# lock, and can hang on a mirror). Wait for the lock (DPkg::Lock::Timeout); if a
+# hung apt-get still holds it after the timeout, kill it (a metadata 'update' --
+# safe, and ours has already returned) and retry once. Stop the timers so a fresh
+# apt-daily can't grab the lock mid-run.
+_SUDO=""; [ "$(id -u)" -eq 0 ] || _SUDO="sudo"
+apt_get() {
+    $_SUDO systemctl stop apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
+    $_SUDO env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 "$@" && return 0
+    $_SUDO pkill -9 -x apt-get 2>/dev/null || true; sleep 2
+    $_SUDO dpkg --configure -a >/dev/null 2>&1 || true
+    $_SUDO env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 "$@"
+}
+
 # ---- prerequisites: jq, k3s, helm ------------------------------------------
 ensure_pkg() {
     # ensure_pkg <command> <deb-pkg> <rpm-pkg>
     command -v "$1" >/dev/null && return 0
     log "installing $1"
     case "$ID" in
-        ubuntu|debian) apt-get update -qq && apt-get install -y "$2" ;;
+        ubuntu|debian) apt_get update -qq && apt_get install -y "$2" ;;
         rocky|rhel|almalinux|centos) dnf install -y "$3" ;;
         *) fail "unsupported OS for auto-install: $ID (install $1 manually)" ;;
     esac
@@ -198,7 +212,7 @@ if [ "$DRIVER" = "mayascale" ]; then
     if ! modprobe nvme-tcp 2>/dev/null; then
         log "  nvme-tcp not loadable -- installing kernel modules"
         case "$ID" in
-            ubuntu|debian) apt-get install -y "linux-modules-extra-$(uname -r)" >/dev/null 2>&1 || true ;;
+            ubuntu|debian) apt_get install -y "linux-modules-extra-$(uname -r)" >/dev/null 2>&1 || true ;;
             rocky|rhel|almalinux|centos) : ;;  # el9 ships nvme-tcp in the base kernel
         esac
         modprobe nvme-tcp 2>/dev/null || true
