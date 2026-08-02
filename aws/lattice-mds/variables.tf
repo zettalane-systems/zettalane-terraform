@@ -80,6 +80,12 @@ variable "source_ami" {
   default     = ""
 }
 
+variable "image_owners" {
+  description = "Accounts searched for the prebuilt MDS image, in order. The published community image is owned by the ZettaLane publisher account, so \"self\" alone finds nothing in a customer's account -- that account is listed first, with self retained so a locally built image still wins."
+  type        = list(string)
+  default     = ["761780141985", "self"]
+}
+
 variable "source_ami_name_filter" {
   description = "Name filter used to find the prebuilt MDS AMI when source_ami is empty"
   type        = string

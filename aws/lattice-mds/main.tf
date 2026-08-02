@@ -52,7 +52,7 @@ data "aws_vpc" "selected" {
 # that was searched, instead of surfacing a provider-level lookup error.
 data "aws_ami_ids" "lattice_mds" {
   count  = var.source_ami == "" ? 1 : 0
-  owners = ["self"]
+  owners = var.image_owners
 
   filter {
     name   = "name"
