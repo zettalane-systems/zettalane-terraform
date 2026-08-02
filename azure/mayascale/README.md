@@ -55,7 +55,7 @@ MayaScale provides ultra-high-performance distributed block storage with:
 5. Access your deployment:
    ```bash
    # SSH to node
-   terraform output ssh_command_node1
+   terraform output ssh_commands
 
    # Get connection info
    terraform output deployment_summary
@@ -93,7 +93,7 @@ Azure uses L-series VMs with local NVMe storage (Laosv4 recommended):
 | location | westus | Azure region |
 | performance_policy | regional-standard-performance | Performance tier |
 | instance_family | laosv4 | L-series family (laosv4, lasv4, lsv3, lsv2) |
-| use_spot_vms | false | Use Spot VMs for cost savings |
+| use_spot_instances | false | Use Spot instances for cost savings |
 
 ### Network Variables
 
@@ -101,7 +101,7 @@ Azure uses L-series VMs with local NVMe storage (Laosv4 recommended):
 |----------|---------|-------------|
 | resource_group_name | (auto) | Resource group (created if not specified) |
 | vnet_name | (auto) | Virtual network name |
-| ssh_source_ranges | ["0.0.0.0/0"] | CIDR ranges for SSH access |
+| allowed_ssh_cidrs | ["0.0.0.0/0"] | CIDR ranges allowed to SSH |
 
 ## Outputs
 
@@ -111,7 +111,18 @@ Azure uses L-series VMs with local NVMe storage (Laosv4 recommended):
 | node1_private_ip | Private IP of node 1 |
 | vip1_address | Virtual IP 1 for client access |
 | vip2_address | Virtual IP 2 for client access |
-| ssh_command_node1 | SSH command to connect |
+| ssh_commands | SSH commands for both nodes |
+
+### Private-only deployments (no public IPs)
+
+`assign_public_ip` defaults to `false`, which is the right posture for production. Set
+it to `true` for direct SSH access to the nodes, as the Quick Start above does.
+
+Leaving it `false` requires outbound connectivity that this module does **not** create,
+and what that takes differs by cloud. **Please consult a ZettaLane Systems support
+engineer before deploying without public IPs** — support@zettalane.com.
+
+| assign_public_ip | **false** | Assign public IPs to the nodes; see [Private-only deployments](#private-only-deployments-no-public-ips) |
 | deployment_summary | Human-readable summary |
 | csi_backend | Driver config + pool map for the ZettaLane CSI driver (set `deployment_type = vg-active-active`) |
 

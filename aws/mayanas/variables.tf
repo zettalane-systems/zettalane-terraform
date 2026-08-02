@@ -206,7 +206,7 @@ variable "force_destroy_buckets" {
 }
 
 variable "assign_public_ip" {
-  description = "Assign public IPs to instances (set false for private-only deployment)"
+  description = "Assign public IPs to instances. AWS is the outlier here: GCP (Private Google Access), Azure (Service Endpoints) and OCI (Service Gateway) all give instances private control-plane access for free, while AWS bills for it. Setting this false gives a private-only deployment, and this module creates NO NAT gateway and NO VPC endpoints -- you must supply that connectivity and pay for it (~$7/mo per interface endpoint per AZ, or ~$32/mo for a NAT gateway, plus data). It is NOT only about ssh reachability: mayacli calls ec2:AssignPrivateIpAddresses to attach each VIP as a secondary private IP, and IMDS supplies only credentials -- the HTTPS call still has to reach ec2.<region>.amazonaws.com. Without a path there the VIPs never come up and the cluster is non-functional even though terraform apply succeeds (validated 2026-06-08 in a default VPC: heartbeat never started, both VIPs dead). The nodes also need S3 for the object vdevs, which an S3 gateway endpoint covers for free."
   type        = bool
   default     = false
 }

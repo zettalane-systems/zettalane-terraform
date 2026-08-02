@@ -6,7 +6,7 @@ Deploy MayaNAS enterprise NFS storage on Google Cloud Platform.
 
 MayaNAS provides high-performance NFS storage with:
 - ZFS reliability and data integrity
-- Automatic tiering to Google Cloud Storage
+- Live ZFS zpool vdevs on Google Cloud Storage — the object store *is* the pool, not an archive tier
 - Active-Active HA for high availability
 - NFSv3/NFSv4 and SMB protocol support
 
@@ -91,14 +91,27 @@ MayaNAS provides high-performance NFS storage with:
 | network_name | default | VPC network name |
 | subnet_name | (auto) | Subnet name |
 | ssh_source_ranges | ["0.0.0.0/0"] | CIDR ranges for SSH access |
+| enable_iap | false | Use an IAP tunnel for SSH instead of a public IP |
+| assign_public_ip | **false** | Assign public IPs to the nodes; see [Private-only deployments](#private-only-deployments-no-public-ips) |
 
 ## Outputs
 
 | Output | Description |
 |--------|-------------|
-| node1_external_ip | External IP of node 1 |
-| vip_node1_address | Virtual IP for NFS access |
+| node1_public_ip | Public IP of node 1 (`null` when `assign_public_ip = false`) |
+| vip_address | Virtual IP for NFS access |
+| vip_address_2 | Second VIP (active-active only) |
 | ssh_command_node1 | SSH command to connect |
+
+### Private-only deployments (no public IPs)
+
+`assign_public_ip` defaults to `false`, which is the right posture for production. Set
+it to `true` for direct SSH access to the nodes, as the Quick Start above does.
+
+Leaving it `false` requires outbound connectivity that this module does **not** create,
+and what that takes differs by cloud. **Please consult a ZettaLane Systems support
+engineer before deploying without public IPs** — support@zettalane.com.
+
 | web_ui_url_node1 | Web UI URL |
 | mayanas_password | Web UI password (sensitive) |
 | gcs_bucket_names | Created GCS bucket names |
@@ -110,7 +123,7 @@ After deployment:
 
 ```bash
 # Get VIP address
-VIP=$(terraform output -raw vip_node1_address)
+VIP=$(terraform output -raw vip_address)
 
 # Mount on client (from same VPC)
 sudo mount -t nfs ${VIP}:/mayanas-pool/share1 /mnt/mayanas

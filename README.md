@@ -8,7 +8,7 @@ Terraform modules for deploying ZettaLane storage solutions on public clouds.
 
 ### MayaNAS
 
-Enterprise NFS storage with ZFS reliability and cloud tiering.
+Enterprise NFS storage with ZFS reliability and cloud storage economics.
 
 | Cloud | Path | Status |
 |-------|------|--------|
@@ -97,10 +97,11 @@ COMMON OPTIONS:
     --cluster TYPE            Cluster type: single, ha (default: single)
     -t, --tier TIER           Performance tier: basic, standard, performance, ultra (default: standard)
     -m, --machine-type TYPE   Override machine type (cloud-specific)
+    --client-machine-type T   Override client machine type (default: derived from
+                              --machine-type vCPU count, doubled for ha cluster)
     -b, --bucket-count COUNT  Number of cloud storage buckets (default: 1, use 8-10 for high throughput)
     --ssh-key PATH            SSH public key file (default: ~/.ssh/id_rsa.pub)
-    --spot                    Use spot/preemptible instances (default)
-    --no-spot                 Use on-demand instances
+    --spot                    Use spot/preemptible instances (default: on-demand)
     --skip-deploy             Skip terraform apply, validate existing deployment
     --skip-client             Skip client deployment, storage-only validation
     -d, --destroy             Destroy all resources and exit
@@ -149,10 +150,10 @@ For maximum throughput, use `-t ultra -b 10` or `-t performance -b 8`.
 **Connect to storage node:**
 ```bash
 # Get IP from terraform output
-cd gcp/mayanas && terraform output storage_ip
+cd gcp/mayanas && terraform output -raw node1_public_ip
 
 # SSH to storage
-ssh mayanas@<storage_ip>
+ssh mayanas@<node1_public_ip>
 ```
 
 ### Examples

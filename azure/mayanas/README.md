@@ -6,7 +6,7 @@ Deploy MayaNAS enterprise NFS storage on Microsoft Azure.
 
 MayaNAS provides high-performance NFS storage with:
 - ZFS reliability and data integrity
-- Automatic tiering to Azure Blob Storage
+- Live ZFS zpool vdevs on Azure Blob Storage — the object store *is* the pool, not an archive tier
 - Active-Active HA for high availability
 - NFSv3/NFSv4 and SMB protocol support
 
@@ -56,6 +56,7 @@ MayaNAS provides high-performance NFS storage with:
    terraform output deployment_summary
 
    # SSH to node
+   # requires assign_public_ip = true (see Private-only deployments)
    ssh azureuser@$(terraform output -raw node1_public_ip)
    ```
 
@@ -96,9 +97,7 @@ ssh_public_key = "ssh-rsa AAAA..."
 
 **Option 2: Azure Key Vault** (recommended for teams)
 ```hcl
-ssh_key_vault_name         = "my-keyvault"
-ssh_key_vault_secret_name  = "ssh-public-key"  # default
-ssh_key_vault_resource_group = "rg-shared"     # optional, defaults to deployment RG
+ssh_key_vault_id = "/subscriptions/.../vaults/my-keyvault"
 ```
 
 **Option 3: Azure SSH Public Key resource**
@@ -109,9 +108,8 @@ ssh_key_resource_id = "/subscriptions/.../providers/Microsoft.Compute/sshPublicK
 | Variable | Default | Description |
 |----------|---------|-------------|
 | ssh_public_key | | Direct SSH public key content |
-| ssh_key_vault_name | | Key Vault name containing SSH key |
-| ssh_key_vault_secret_name | ssh-public-key | Secret name in Key Vault |
-| ssh_key_vault_resource_group | | Resource group for Key Vault |
+| ssh_key_vault_id | | Resource id of a Key Vault holding the SSH key |
+| assign_public_ip | **false** | Assign public IPs to the nodes; see [Private-only deployments](#private-only-deployments-no-public-ips) |
 | ssh_key_resource_id | | Azure SSH Public Key resource ID |
 
 ### Network Variables
@@ -121,6 +119,15 @@ ssh_key_resource_id = "/subscriptions/.../providers/Microsoft.Compute/sshPublicK
 | vnet_name | (auto) | Virtual Network name |
 | subnet_name | (auto) | Subnet name |
 | ssh_cidr_blocks | ["0.0.0.0/0"] | CIDR ranges for SSH access |
+
+### Private-only deployments (no public IPs)
+
+`assign_public_ip` defaults to `false`, which is the right posture for production. Set
+it to `true` for direct SSH access to the nodes, as the Quick Start above does.
+
+Leaving it `false` requires outbound connectivity that this module does **not** create,
+and what that takes differs by cloud. **Please consult a ZettaLane Systems support
+engineer before deploying without public IPs** — support@zettalane.com.
 
 ## Outputs
 
