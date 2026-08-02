@@ -1,0 +1,12 @@
+#cloud-config
+# Deliberately minimal: just create the admin user + SSH key so the VM comes
+# up fast and predictably. All build/runtime setup (apt packages, RonDB fetch,
+# Lattice build, config, service) is done by setup-lattice-mds.sh, which
+# deploy-pnfs.sh scp's over and runs once SSH is available — easier to debug
+# and re-run than baking it into cloud-init.
+users:
+  - name: ${admin_username}
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ${ssh_public_key}
