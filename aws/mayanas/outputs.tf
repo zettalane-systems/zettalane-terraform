@@ -259,3 +259,16 @@ output "share_mount_instructions" {
     ) : {}
   }
 }
+
+# The DS endpoint list consumed by the pNFS deploy tooling. Mirrors the gcp/azure
+# modules so that tooling stays cloud-agnostic: active-active yields exactly two
+# entries, one per node-owned zpool.
+output "nfs_test_shares" {
+  description = "NFS share paths for automated testing"
+  value = var.deployment_type == "active-active" ? [
+    "${local.vip_address}:/${local.effective_cluster_name}-pool-node1/${length(var.shares) > 0 ? var.shares[0].name : "share1"}",
+    "${local.vip_address_2}:/${local.effective_cluster_name}-pool-node2/${length(var.shares) > 0 ? var.shares[0].name : "share1"}"
+    ] : [
+    "${var.deployment_type == "single" ? aws_instance.mayanas_primary.private_ip : local.vip_address}:/${local.effective_cluster_name}-pool/${length(var.shares) > 0 ? var.shares[0].name : "share1"}"
+  ]
+}
