@@ -491,3 +491,9 @@ variable "mayanas_startup_wait" {
     error_message = "MayaNAS startup wait must be null or 0 or greater."
   }
 }
+
+variable "ssh_private_key_path" {
+  description = "Private key matching ssh_public_key, used only to render the ssh_command outputs. Empty omits -i."
+  type        = string
+  default     = ""
+}

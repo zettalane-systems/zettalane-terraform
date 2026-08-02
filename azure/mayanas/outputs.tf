@@ -56,12 +56,12 @@ output "node2_private_ip" {
 # SSH Connection Information
 output "ssh_command_node1" {
   description = "SSH command for Node 1 (Primary)"
-  value       = var.assign_public_ip ? "ssh -i ~/.ssh/${var.ssh_key_resource_id != "" ? basename(var.ssh_key_resource_id) : "id_rsa"}.pem azureuser@${azurerm_public_ip.mayanas[0].ip_address}" : "az ssh vm -n ${azurerm_linux_virtual_machine.mayanas[0].name} -g ${local.resource_group_name}"
+  value       = var.assign_public_ip ? "ssh ${var.ssh_private_key_path != "" ? "-i ${var.ssh_private_key_path} " : ""}azureuser@${azurerm_public_ip.mayanas[0].ip_address}" : "az ssh vm -n ${azurerm_linux_virtual_machine.mayanas[0].name} -g ${local.resource_group_name}"
 }
 
 output "ssh_command_node2" {
   description = "SSH command for Node 2 (Secondary) - HA deployments only"
-  value       = local.node_count > 1 ? (var.assign_public_ip ? "ssh -i ~/.ssh/${var.ssh_key_resource_id != "" ? basename(var.ssh_key_resource_id) : "id_rsa"}.pem azureuser@${azurerm_public_ip.mayanas[1].ip_address}" : "az ssh vm -n ${azurerm_linux_virtual_machine.mayanas[1].name} -g ${local.resource_group_name}") : "N/A - Single node deployment"
+  value       = local.node_count > 1 ? (var.assign_public_ip ? "ssh ${var.ssh_private_key_path != "" ? "-i ${var.ssh_private_key_path} " : ""}azureuser@${azurerm_public_ip.mayanas[1].ip_address}" : "az ssh vm -n ${azurerm_linux_virtual_machine.mayanas[1].name} -g ${local.resource_group_name}") : "N/A - Single node deployment"
 }
 
 # High Availability Information
@@ -162,12 +162,12 @@ output "network_security_group_id" {
 # Route Table Information (Custom Route VIP mechanism)
 output "route_table_name" {
   description = "Name of the route table (custom-route VIP mechanism)"
-  value       = var.vip_mechanism == "custom-route" && local.node_count > 1 ? azurerm_route_table.mayanas[0].name : "N/A"
+  value       = local.rt_enabled ? "mayanas-route-table" : "N/A"
 }
 
 output "route_table_id" {
   description = "ID of the route table (custom-route VIP mechanism)"
-  value       = var.vip_mechanism == "custom-route" && local.node_count > 1 ? azurerm_route_table.mayanas[0].id : "N/A"
+  value       = local.rt_enabled ? local.route_table_id : "N/A"
 }
 
 # Identity Information
@@ -196,28 +196,28 @@ output "node_zones" {
 output "deployment_info" {
   description = "Structured deployment information for automation"
   value = {
-    cluster_name         = local.cluster_name
-    deployment_type      = var.deployment_type
-    machine_type         = var.vm_size
-    total_bucket_count   = length(azurerm_storage_container.mayanas)
-    node_count           = local.node_count
-    region               = local.resource_group.location
-    availability_zones   = local.availability_zones
-    vip_mechanism        = local.node_count > 1 ? var.vip_mechanism : "N/A"
-    vip_address          = local.node_count > 1 ? local.vip_address_final : "N/A"
-    vip_address_2        = var.deployment_type == "active-active" ? local.vip_address_2_final : "N/A"
-    storage_account      = azurerm_storage_account.mayanas.name
-    storage_containers   = azurerm_storage_container.mayanas[*].name
-    metadata_disk_count  = var.metadata_disk_count
-    metadata_disk_gb     = var.metadata_disk_size_gb
-    storage_size_gb      = var.storage_size_gb
+    cluster_name        = local.cluster_name
+    deployment_type     = var.deployment_type
+    machine_type        = var.vm_size
+    total_bucket_count  = length(azurerm_storage_container.mayanas)
+    node_count          = local.node_count
+    region              = local.resource_group.location
+    availability_zones  = local.availability_zones
+    vip_mechanism       = local.node_count > 1 ? var.vip_mechanism : "N/A"
+    vip_address         = local.node_count > 1 ? local.vip_address_final : "N/A"
+    vip_address_2       = var.deployment_type == "active-active" ? local.vip_address_2_final : "N/A"
+    storage_account     = azurerm_storage_account.mayanas.name
+    storage_containers  = azurerm_storage_container.mayanas[*].name
+    metadata_disk_count = var.metadata_disk_count
+    metadata_disk_gb    = var.metadata_disk_size_gb
+    storage_size_gb     = var.storage_size_gb
   }
 }
 
 # Deployment Summary (pretty text, for humans)
 output "deployment_summary" {
   description = "Human-readable deployment summary"
-  value = <<-EOT
+  value       = <<-EOT
 
     🎯 MayaNAS ${upper(var.deployment_type)} Deployment Complete!
 
@@ -279,7 +279,7 @@ output "nfs_mount_commands" {
     "# Or mount directly from nodes:",
     "sudo mount -t nfs ${azurerm_network_interface.mayanas[0].ip_configuration[0].private_ip_address}:/export /mnt/mayanas",
     local.node_count > 1 ? "sudo mount -t nfs ${azurerm_network_interface.mayanas[1].ip_configuration[0].private_ip_address}:/export /mnt/mayanas" : ""
-  ] : [
+    ] : [
     "# Mount from single node:",
     "sudo mount -t nfs ${azurerm_network_interface.mayanas[0].ip_configuration[0].private_ip_address}:/export /mnt/mayanas"
   ]
@@ -289,13 +289,13 @@ output "nfs_mount_commands" {
 output "management_commands" {
   description = "Useful management commands for the deployment"
   value = {
-    check_vm_status = "az vm list --resource-group ${local.resource_group_name} --output table"
-    check_disk_status = "az disk list --resource-group ${local.resource_group_name} --output table"
+    check_vm_status       = "az vm list --resource-group ${local.resource_group_name} --output table"
+    check_disk_status     = "az disk list --resource-group ${local.resource_group_name} --output table"
     check_storage_account = "az storage account show --name ${azurerm_storage_account.mayanas.name} --resource-group ${local.resource_group_name}"
-    check_load_balancer = var.vip_mechanism == "load-balancer" && local.node_count > 1 ? "az lb show --name ${azurerm_lb.mayanas[0].name} --resource-group ${local.resource_group_name}" : "N/A"
-    check_route_table = var.vip_mechanism == "custom-route" && local.node_count > 1 ? "az network route-table show --name ${azurerm_route_table.mayanas[0].name} --resource-group ${local.resource_group_name}" : "N/A"
-    ssh_node1 = var.assign_public_ip ? "ssh -i ~/.ssh/${var.ssh_key_resource_id != "" ? basename(var.ssh_key_resource_id) : "id_rsa"}.pem azureuser@${azurerm_public_ip.mayanas[0].ip_address}" : "az ssh vm -n ${azurerm_linux_virtual_machine.mayanas[0].name} -g ${local.resource_group_name}"
-    ssh_node2 = local.node_count > 1 ? (var.assign_public_ip ? "ssh -i ~/.ssh/${var.ssh_key_resource_id != "" ? basename(var.ssh_key_resource_id) : "id_rsa"}.pem azureuser@${azurerm_public_ip.mayanas[1].ip_address}" : "az ssh vm -n ${azurerm_linux_virtual_machine.mayanas[1].name} -g ${local.resource_group_name}") : "N/A"
+    check_load_balancer   = var.vip_mechanism == "load-balancer" && local.node_count > 1 ? "az lb show --name ${azurerm_lb.mayanas[0].name} --resource-group ${local.resource_group_name}" : "N/A"
+    check_route_table     = local.rt_enabled ? "az network route-table show --name mayanas-route-table --resource-group ${local.resource_group_name}" : "N/A"
+    ssh_node1             = var.assign_public_ip ? "ssh ${var.ssh_private_key_path != "" ? "-i ${var.ssh_private_key_path} " : ""}azureuser@${azurerm_public_ip.mayanas[0].ip_address}" : "az ssh vm -n ${azurerm_linux_virtual_machine.mayanas[0].name} -g ${local.resource_group_name}"
+    ssh_node2             = local.node_count > 1 ? (var.assign_public_ip ? "ssh ${var.ssh_private_key_path != "" ? "-i ${var.ssh_private_key_path} " : ""}azureuser@${azurerm_public_ip.mayanas[1].ip_address}" : "az ssh vm -n ${azurerm_linux_virtual_machine.mayanas[1].name} -g ${local.resource_group_name}") : "N/A"
   }
 }
 
@@ -303,10 +303,10 @@ output "management_commands" {
 output "health_check_info" {
   description = "Health check and monitoring information"
   value = {
-    health_probe_port = var.vip_mechanism == "load-balancer" && local.node_count > 1 ? "61000" : "N/A"
+    health_probe_port    = var.vip_mechanism == "load-balancer" && local.node_count > 1 ? "61000" : "N/A"
     health_check_service = var.vip_mechanism == "load-balancer" && local.node_count > 1 ? "systemctl status mayanas-health-check" : "N/A"
-    initialization_log = "/var/log/mayanas-init.log"
-    mayanas_config = "/opt/mayastor/config/options"
+    initialization_log   = "/var/log/mayanas-init.log"
+    mayanas_config       = "/opt/mayastor/config/options"
     azure_storage_config = "/opt/mayastor/config/azure_storage"
   }
 }
@@ -315,18 +315,32 @@ output "health_check_info" {
 output "failover_info" {
   description = "Information needed for MayaNAS failover.pl integration"
   value = {
-    route_table_name = local.node_count > 1 && var.vip_mechanism == "custom-route" ? "mayanas-route-table" : ""
-    route_vip1_name = local.node_count > 1 && var.vip_mechanism == "custom-route" ? "mayascale-route-vip1" : ""
-    route_vip2_name = local.node_count > 1 && var.vip_mechanism == "custom-route" && var.deployment_type == "active-active" ? "mayascale-route-vip2" : ""
-    lb_backend_pool = local.node_count > 1 && var.vip_mechanism == "load-balancer" ? azurerm_lb_backend_address_pool.mayanas[0].name : ""
+    route_table_name  = local.node_count > 1 && var.vip_mechanism == "custom-route" ? "mayanas-route-table" : ""
+    route_vip1_name   = local.node_count > 1 && var.vip_mechanism == "custom-route" ? "mayascale-route-vip1" : ""
+    route_vip2_name   = local.node_count > 1 && var.vip_mechanism == "custom-route" && var.deployment_type == "active-active" ? "mayascale-route-vip2" : ""
+    lb_backend_pool   = local.node_count > 1 && var.vip_mechanism == "load-balancer" ? azurerm_lb_backend_address_pool.mayanas[0].name : ""
     health_probe_port = local.node_count > 1 && var.vip_mechanism == "load-balancer" ? "61000" : ""
-    resource_group = local.resource_group_name
-    vip_addresses = local.node_count > 1 ? (var.deployment_type == "active-active" ? [local.vip_address_final, local.vip_address_2_final] : [local.vip_address_final]) : []
-    message = local.node_count > 1 ? "" : "Single node deployment does not require failover configuration"
+    resource_group    = local.resource_group_name
+    vip_addresses     = local.node_count > 1 ? (var.deployment_type == "active-active" ? [local.vip_address_final, local.vip_address_2_final] : [local.vip_address_final]) : []
+    message           = local.node_count > 1 ? "" : "Single node deployment does not require failover configuration"
   }
 }
 
 # Share Mount Instructions (for validate-performance.sh compatibility)
+# Same shape as gcp/mayanas' output of the same name, so a deployer can read the
+# DS endpoints identically on both clouds. share_mount_instructions carries the same
+# information, but as ready-made mount COMMANDS nested per node -- fine for a human,
+# awkward for a script that just wants <ip>:/<export>.
+output "nfs_test_shares" {
+  description = "NFS share paths for automated testing (active-active = one per node)"
+  value = var.deployment_type == "active-active" ? [
+    "${local.vip_address_final}:/${local.cluster_name}-pool-node1/${length(var.shares) > 0 ? var.shares[0].name : "share1"}",
+    "${local.vip_address_2_final}:/${local.cluster_name}-pool-node2/${length(var.shares) > 0 ? var.shares[0].name : "share1"}"
+    ] : [
+    "${var.deployment_type == "single" ? azurerm_network_interface.mayanas[0].ip_configuration[0].private_ip_address : local.vip_address_final}:/${local.cluster_name}-pool/${length(var.shares) > 0 ? var.shares[0].name : "share1"}"
+  ]
+}
+
 output "share_mount_instructions" {
   description = "Mount instructions for configured shares"
   value = {
@@ -335,27 +349,27 @@ output "share_mount_instructions" {
       var.deployment_type == "active-active" ? {
         node1 = {
           for share in var.shares : share.name => {
-            zpool       = "${local.cluster_name}-pool-node1"
-            vip         = local.vip_address_final
-            nfs_mount   = contains(["nfs", "both"], share.export) ? "mount -t nfs ${local.vip_address_final}:/${local.cluster_name}-pool-node1/${share.name} /mnt/${share.name}" : ""
-            smb_share   = contains(["smb", "both"], share.export) ? "//${local.vip_address_final}/${local.cluster_name}-pool-node1-${share.name}" : ""
+            zpool     = "${local.cluster_name}-pool-node1"
+            vip       = local.vip_address_final
+            nfs_mount = contains(["nfs", "both"], share.export) ? "mount -t nfs ${local.vip_address_final}:/${local.cluster_name}-pool-node1/${share.name} /mnt/${share.name}" : ""
+            smb_share = contains(["smb", "both"], share.export) ? "//${local.vip_address_final}/${local.cluster_name}-pool-node1-${share.name}" : ""
           }
         }
         node2 = {
           for share in var.shares : share.name => {
-            zpool       = "${local.cluster_name}-pool-node2"
-            vip         = local.vip_address_2_final
-            nfs_mount   = contains(["nfs", "both"], share.export) ? "mount -t nfs ${local.vip_address_2_final}:/${local.cluster_name}-pool-node2/${share.name} /mnt/${share.name}" : ""
-            smb_share   = contains(["smb", "both"], share.export) ? "//${local.vip_address_2_final}/${local.cluster_name}-pool-node2-${share.name}" : ""
+            zpool     = "${local.cluster_name}-pool-node2"
+            vip       = local.vip_address_2_final
+            nfs_mount = contains(["nfs", "both"], share.export) ? "mount -t nfs ${local.vip_address_2_final}:/${local.cluster_name}-pool-node2/${share.name} /mnt/${share.name}" : ""
+            smb_share = contains(["smb", "both"], share.export) ? "//${local.vip_address_2_final}/${local.cluster_name}-pool-node2-${share.name}" : ""
           }
         }
-      } : {
+        } : {
         node1 = {
           for share in var.shares : share.name => {
-            zpool       = "${local.cluster_name}-pool"
-            server_ip   = var.deployment_type == "single" ? azurerm_network_interface.mayanas[0].ip_configuration[0].private_ip_address : local.vip_address_final
-            nfs_mount   = contains(["nfs", "both"], share.export) ? "mount -t nfs ${var.deployment_type == "single" ? azurerm_network_interface.mayanas[0].ip_configuration[0].private_ip_address : local.vip_address_final}:/${local.cluster_name}-pool/${share.name} /mnt/${share.name}" : ""
-            smb_share   = contains(["smb", "both"], share.export) ? "//${var.deployment_type == "single" ? azurerm_network_interface.mayanas[0].ip_configuration[0].private_ip_address : local.vip_address_final}/${local.cluster_name}-pool-${share.name}" : ""
+            zpool     = "${local.cluster_name}-pool"
+            server_ip = var.deployment_type == "single" ? azurerm_network_interface.mayanas[0].ip_configuration[0].private_ip_address : local.vip_address_final
+            nfs_mount = contains(["nfs", "both"], share.export) ? "mount -t nfs ${var.deployment_type == "single" ? azurerm_network_interface.mayanas[0].ip_configuration[0].private_ip_address : local.vip_address_final}:/${local.cluster_name}-pool/${share.name} /mnt/${share.name}" : ""
+            smb_share = contains(["smb", "both"], share.export) ? "//${var.deployment_type == "single" ? azurerm_network_interface.mayanas[0].ip_configuration[0].private_ip_address : local.vip_address_final}/${local.cluster_name}-pool-${share.name}" : ""
           }
         }
       }

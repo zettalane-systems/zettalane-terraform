@@ -81,23 +81,29 @@ resource "null_resource" "ssh_key_validation" {
   }
 }
 
-# Check if resource group exists (only when name is specified)
+# Check if resource group exists (only when name is specified), and who owns it
 data "external" "resource_group_exists" {
   count = var.resource_group_name != "" ? 1 : 0
   program = ["bash", "-c", <<-EOF
     if az group show --name "${var.resource_group_name}" --subscription "${var.subscription_id}" >/dev/null 2>&1; then
-      echo '{"exists":"true"}'
+      o=$(az group show --name "${var.resource_group_name}" --subscription "${var.subscription_id}" --query "tags.CreatedByCluster" -o tsv 2>/dev/null)
+      echo "{\"exists\":\"true\",\"owner\":\"$${o:-}\"}"
     else
-      echo '{"exists":"false"}'
+      echo '{"exists":"false","owner":""}'
     fi
   EOF
   ]
 }
 
 locals {
-  # Determine if we should use existing resource group
-  use_existing_rg = var.resource_group_name != "" && length(data.external.resource_group_exists) > 0 && data.external.resource_group_exists[0].result.exists == "true"
-  create_new_rg   = var.resource_group_name == "" || (length(data.external.resource_group_exists) > 0 && data.external.resource_group_exists[0].result.exists == "false")
+  rg_present = var.resource_group_name != "" && try(data.external.resource_group_exists[0].result.exists, "false") == "true"
+  rg_is_ours = try(data.external.resource_group_exists[0].result.owner, "") == local.cluster_name
+
+  # Reuse only a resource group another cluster owns. Keying on existence alone is
+  # self-defeating: the next apply finds the RG this cluster created, sets count to 0,
+  # and terraform reads that as a request to destroy it.
+  use_existing_rg = local.rg_present && !local.rg_is_ours
+  create_new_rg   = !local.use_existing_rg
 }
 
 # Use existing resource group if it exists
@@ -111,7 +117,7 @@ resource "azurerm_resource_group" "mayanas" {
   count    = local.create_new_rg ? 1 : 0
   name     = var.resource_group_name != "" ? var.resource_group_name : "rg-mayanas-${var.cluster_name != "" ? var.cluster_name : "cluster"}-${random_id.deployment.hex}"
   location = var.location != "" ? var.location : "eastus"
-  tags     = var.tags
+  tags     = merge(var.tags, { CreatedByCluster = local.cluster_name })
 
   lifecycle {
     ignore_changes = [tags]
@@ -134,10 +140,11 @@ locals {
 data "external" "vnet_exists" {
   count = var.resource_group_name != "" ? 1 : 0
   program = ["bash", "-c", <<-EOF
-    if [ "$(az network vnet show --subscription "${var.subscription_id}" --resource-group "${var.resource_group_name}" --name "${local.target_vnet_name}" --query name -o tsv 2>/dev/null)" = "${local.target_vnet_name}" ]; then
-      echo '{"exists":"true"}'
+    o=$(az network vnet show --subscription "${var.subscription_id}" --resource-group "${var.resource_group_name}" --name "${local.target_vnet_name}" --query "tags.CreatedByCluster" -o tsv 2>/dev/null)
+    if [ -n "$(az network vnet show --subscription "${var.subscription_id}" --resource-group "${var.resource_group_name}" --name "${local.target_vnet_name}" --query name -o tsv 2>/dev/null)" ]; then
+      echo "{\"exists\":\"true\",\"owner\":\"$${o:-}\"}"
     else
-      echo '{"exists":"false"}'
+      echo '{"exists":"false","owner":""}'
     fi
   EOF
   ]
@@ -156,9 +163,16 @@ data "external" "subnet_exists" {
 }
 
 locals {
-  use_existing_vnet   = try(data.external.vnet_exists[0].result.exists, "false") == "true"
-  create_new_vnet     = !local.use_existing_vnet
-  use_existing_subnet = try(data.external.subnet_exists[0].result.exists, "false") == "true"
+  vnet_present = try(data.external.vnet_exists[0].result.exists, "false") == "true"
+  vnet_is_ours = try(data.external.vnet_exists[0].result.owner, "") == local.cluster_name
+
+  # Reuse only a VNet another cluster owns, for the same reason as the resource group
+  # above: keying on existence alone makes an apply destroy the network it created.
+  use_existing_vnet = local.vnet_present && !local.vnet_is_ours
+  create_new_vnet   = !local.use_existing_vnet
+
+  # Subnet ownership follows the VNet (Azure subnets cannot carry tags).
+  use_existing_subnet = local.use_existing_vnet && try(data.external.subnet_exists[0].result.exists, "false") == "true"
   create_new_subnet   = !local.use_existing_subnet
 }
 
@@ -176,7 +190,7 @@ resource "azurerm_virtual_network" "mayanas" {
   address_space       = var.vnet_address_space
   location            = local.resource_group.location
   resource_group_name = local.resource_group_name
-  tags                = var.tags
+  tags                = merge(var.tags, { CreatedByCluster = local.cluster_name })
 }
 
 # Reuse the shared subnet if it exists
@@ -409,21 +423,60 @@ resource "azurerm_network_security_group" "mayanas" {
   }
 }
 
-# Route Table for Custom Route VIP mechanism (single shared table)
+# Route Table for Custom Route VIP mechanism. The table is SHARED and named the same
+# ("mayanas-route-table") for every cluster in the RG, and failover.pl also creates it
+# if missing at runtime -- so it routinely pre-exists. Reuse it when it does, else
+# create it; same use-if-exists pattern as the resource group and subnet, and the same
+# one azure/mayascale uses. Per-VIP routes are added at runtime, so the table itself is
+# just an empty container.
+locals {
+  rt_enabled = var.vip_mechanism == "custom-route" && local.node_count > 1
+  rt_present = local.rt_enabled && try(data.external.route_table_exists[0].result.exists, "false") == "true"
+  rt_is_ours = try(data.external.route_table_exists[0].result.owner, "") == local.cluster_name
+
+  # Ownership, not existence, as with the resource group and VNet above. A table created
+  # by failover.pl carries no CreatedByCluster tag, so it counts as another owner's and
+  # is reused.
+  use_existing_rt = local.rt_present && !local.rt_is_ours
+  create_new_rt   = local.rt_enabled && !local.use_existing_rt
+  route_table_id  = local.rt_enabled ? (local.use_existing_rt ? data.azurerm_route_table.existing[0].id : azurerm_route_table.mayanas[0].id) : null
+}
+
+data "external" "route_table_exists" {
+  count = local.rt_enabled && var.resource_group_name != "" ? 1 : 0
+  program = ["bash", "-c", <<-EOF
+    if [ "$(az network route-table show --subscription "${var.subscription_id}" --resource-group "${var.resource_group_name}" --name "mayanas-route-table" --query name -o tsv 2>/dev/null)" = "mayanas-route-table" ]; then
+      o=$(az network route-table show --subscription "${var.subscription_id}" --resource-group "${var.resource_group_name}" --name "mayanas-route-table" --query "tags.CreatedByCluster" -o tsv 2>/dev/null)
+      echo "{\"exists\":\"true\",\"owner\":\"$${o:-}\"}"
+    else
+      echo '{"exists":"false","owner":""}'
+    fi
+  EOF
+  ]
+}
+
+data "azurerm_route_table" "existing" {
+  count               = local.use_existing_rt ? 1 : 0
+  name                = "mayanas-route-table"
+  resource_group_name = local.resource_group_name
+}
+
 resource "azurerm_route_table" "mayanas" {
-  count                         = var.vip_mechanism == "custom-route" && local.node_count > 1 ? 1 : 0
+  count                         = local.create_new_rt ? 1 : 0
   name                          = "mayanas-route-table"
   location                      = local.resource_group.location
   resource_group_name           = local.resource_group_name
   bgp_route_propagation_enabled = true
-  tags                          = local.common_tags
+  tags                          = merge(local.common_tags, { CreatedByCluster = local.cluster_name })
 }
 
-# Associate route table with subnet
+# Only the cluster that CREATES the shared subnet associates the table; clusters that
+# reuse the subnet skip it, since the subnet already carries the association and
+# re-associating collides.
 resource "azurerm_subnet_route_table_association" "mayanas" {
-  count          = var.vip_mechanism == "custom-route" && local.node_count > 1 ? 1 : 0
+  count          = local.rt_enabled && local.create_new_subnet ? 1 : 0
   subnet_id      = local.subnet_id
-  route_table_id = azurerm_route_table.mayanas[0].id
+  route_table_id = local.route_table_id
 }
 
 # Load Balancer for Load Balancer VIP mechanism
@@ -591,6 +644,11 @@ resource "azurerm_network_interface" "mayanas" {
   resource_group_name            = local.resource_group_name
   accelerated_networking_enabled = var.enable_accelerated_networking
   tags                           = local.common_tags
+
+  # custom-route VIPs reach the node via next_hop_type=VirtualAppliance, so the NIC must
+  # accept packets not addressed to it. failover.pl enables this at runtime on takeover;
+  # declaring it here keeps terraform from turning it back off on the next apply.
+  ip_forwarding_enabled = var.vip_mechanism == "custom-route" && local.node_count > 1
 
   ip_configuration {
     name                          = "internal"
