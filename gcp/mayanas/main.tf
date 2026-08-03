@@ -39,11 +39,31 @@ data "external" "range_analysis" {
     # --flatten is REQUIRED. Without it gcloud joins a subnet's ranges with ';' into ONE
     # value ("10.9.0.0/24;10.100.108.128/25"), so the contains() collision filter below
     # can never match a candidate /24 -- not even an EXACT duplicate.
-    all_ranges=$(gcloud compute networks subnets list \
+    #
+    # A gcloud failure is NOT an empty VPC. Swallowing it into all_ranges="" made an
+    # expired token look identical to "no ranges exist", so terraform picked a colliding
+    # range with full confidence. Fail the plan instead. Capture gcloud on its own line:
+    # inside a pipeline its exit status is discarded (the status is sed's), so a trailing
+    # || on the whole pipeline would never fire.
+    gerr=$(mktemp)
+    raw_ranges=$(gcloud compute networks subnets list \
       --flatten='secondaryIpRanges[]' \
       --format='value(secondaryIpRanges.ipCidrRange)' \
       --filter='network:${var.network_name}' \
-      --quiet 2>/dev/null | grep -v '^$' | tr '\n' ',' | sed 's/,$//') || all_ranges=""
+      --quiet 2>"$gerr") \
+      || { echo "gcloud subnets list failed - authenticated? (gcloud auth login)" >&2
+           cat "$gerr" >&2; rm -f "$gerr"; exit 1; }
+    # An unreadable project does NOT set a non-zero status: gcloud prints "Some requests
+    # did not succeed" and exits 0 with an empty list, which is indistinguishable from a
+    # VPC that has no secondary ranges. Both would let us pick a colliding range.
+    if grep -q 'did not succeed' "$gerr"; then
+      echo "gcloud could not read every subnet in network '${var.network_name}':" >&2
+      cat "$gerr" >&2
+      echo "Refusing to choose a VIP range from a partial list - check the project ID and permissions." >&2
+      rm -f "$gerr"; exit 1
+    fi
+    rm -f "$gerr"
+    all_ranges=$(printf '%s\n' "$raw_ranges" | grep -v '^$' | tr '\n' ',' | sed 's/,$//')
     
     # Get detailed subnet info with regions for debugging  
     ranges_with_regions=$(gcloud compute networks subnets list \
@@ -91,10 +111,13 @@ locals {
   existing_mayanas_range = data.external.range_analysis.result.existing_mayanas_range
 
   # Determine if we can reuse existing mayanas-alias-range
-  can_reuse_existing = (
-    local.existing_mayanas_range != "" &&
-    startswith(local.existing_mayanas_range, "10.100.")
-  )
+  # Any existing mayanas-alias-range is reusable, whatever block it sits in. The old
+  # startswith("10.100.") test described where AUTO-SELECTION looks, not what is valid --
+  # and it was actively destructive: a first pair deployed with --vip-range 10.120.7.0/24
+  # left a range this refused to reuse, so the second pair auto-selected a 10.100.x block
+  # and the startup script deleted the range the FIRST pair's VIPs were allocated from,
+  # unattended, at boot.
+  can_reuse_existing = local.existing_mayanas_range != ""
 
   # Use region-based deterministic hash for VIP range selection (marketplace-package approach)
   # Simple deterministic hash using region name
@@ -113,9 +136,15 @@ locals {
 
   # Use existing range if possible, manual override, or auto-selected range
   # Only assign VIP range for HA deployments (not single)
+  # Precedence: an EXPLICIT range wins over everything. It used to sit below
+  # can_reuse_existing, so --vip-range was silently discarded whenever the subnet already
+  # had a mayanas-alias-range -- the operator names a block and gets a different one.
+  # Masked until now: existing_mayanas_range returned a semicolon-joined string, so
+  # can_reuse_existing could never be true. Reuse still beats auto-select, because
+  # additional HA pairs must share the range the first pair created.
   vip_cidr_range = var.deployment_type == "single" ? "" : (
-    local.can_reuse_existing ? local.existing_mayanas_range : (
-      var.vip_cidr_range != "" ? var.vip_cidr_range : local.auto_selected_range
+    var.vip_cidr_range != "" ? var.vip_cidr_range : (
+      local.can_reuse_existing ? local.existing_mayanas_range : local.auto_selected_range
     )
   )
 

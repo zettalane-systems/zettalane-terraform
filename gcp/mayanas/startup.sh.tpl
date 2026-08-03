@@ -151,33 +151,35 @@ EXISTING_RANGE=$(gcloud compute networks subnets describe "$SUBNET_NAME" --regio
 
 if [ -n "$EXISTING_RANGE" ]; then
     echo "$(date): Secondary range 'mayanas-alias-range' already exists with CIDR: $EXISTING_RANGE"
-    if [ "$EXISTING_RANGE" != "$VIP_CIDR_RANGE" ]; then
-        echo "WARNING: Existing range $EXISTING_RANGE conflicts with Terraform-assigned range $VIP_CIDR_RANGE"
-        echo "$(date): Deleting conflicting range to use Terraform-assigned range"
-        
-        if gcloud compute networks subnets update "$SUBNET_NAME" \
-            --region="$REGION" \
-            --remove-secondary-ranges=mayanas-alias-range \
-            --quiet; then
-            echo "$(date): Successfully removed conflicting range $EXISTING_RANGE"
-            
-            # Now create the correct Terraform-assigned range
-            echo "$(date): Creating Terraform-assigned range: mayanas-alias-range=$VIP_CIDR_RANGE"
-            if gcloud compute networks subnets update "$SUBNET_NAME" \
-                --region="$REGION" \
-                --add-secondary-ranges=mayanas-alias-range="$VIP_CIDR_RANGE" \
-                --quiet; then
-                echo "$(date): Successfully created Terraform-assigned secondary IP range"
-            else
-                echo "ERROR: Failed to create Terraform-assigned secondary IP range"
-                exit 1
-            fi
-        else
-            echo "ERROR: Failed to remove conflicting range - cannot proceed"
-            exit 1
-        fi
+    # The question is not "does the CIDR string match" but "can our VIPs be allocated from
+    # the range that exists". A range that differs textually yet still CONTAINS both VIPs
+    # is perfectly usable, and refusing on string inequality would stop a deploy that would
+    # have worked -- a wider block, or a second pair given the range explicitly.
+    VIPS_FIT=$(awk -v r="$EXISTING_RANGE" -v a="$VIP_ADDRESS" -v b="$VIP_ADDRESS_2" '
+        function ip2int(x,   p) { split(x, p, "."); return p[1]*16777216 + p[2]*65536 + p[3]*256 + p[4] }
+        BEGIN {
+            split(r, c, "/")
+            lo = ip2int(c[1]); hi = lo + 2 ^ (32 - c[2]) - 1
+            ok = 1
+            if (a != "") { v = ip2int(a); if (v < lo || v > hi) ok = 0 }
+            if (b != "") { v = ip2int(b); if (v < lo || v > hi) ok = 0 }
+            print ok
+        }')
+    if [ "$VIPS_FIT" = "1" ]; then
+        echo "$(date): Existing range $EXISTING_RANGE holds our VIPs - proceeding with it"
     else
-        echo "$(date): Existing range matches Terraform assignment - no changes needed"
+        # REFUSE, do not reconcile. This used to delete the existing range and recreate it
+        # at the Terraform-assigned CIDR, on the assumption Terraform is authoritative. It
+        # is not: other HA pairs in this subnet allocate their VIPs from this range, so
+        # deleting it strips the addresses out from under clusters that are still running,
+        # at boot, unattended.
+        echo "ERROR: subnet $SUBNET_NAME already has mayanas-alias-range=$EXISTING_RANGE, which does not contain this deploy's VIPs ($VIP_ADDRESS, $VIP_ADDRESS_2) assigned from $VIP_CIDR_RANGE"
+        echo "HINT: refusing to delete the existing range — another HA pair may be using it."
+        echo "HINT: to join the existing range, redeploy with:  --vip-range $EXISTING_RANGE"
+        echo "HINT: if it is genuinely unused, remove it first:"
+        echo "HINT:   gcloud compute networks subnets update $SUBNET_NAME --region=$REGION \\"
+        echo "HINT:       --remove-secondary-ranges=mayanas-alias-range"
+        exit 1
     fi
 else
     # No existing mayanas-alias-range, create it
