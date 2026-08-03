@@ -182,13 +182,24 @@ if [ -n "$EXISTING_RANGE" ]; then
 else
     # No existing mayanas-alias-range, create it
     echo "$(date): Creating new secondary IP range: mayanas-alias-range=$VIP_CIDR_RANGE"
-    if gcloud compute networks subnets update "$SUBNET_NAME" \
+    # Capture gcloud's stderr: it names the range this one overlaps, which is the whole
+    # diagnosis. It used to go only to this node's startup log, so the operator saw
+    # "cannot proceed" with no cause and no next step.
+    if CREATE_ERR=$(gcloud compute networks subnets update "$SUBNET_NAME" \
         --region="$REGION" \
         --add-secondary-ranges=mayanas-alias-range="$VIP_CIDR_RANGE" \
-        --quiet; then
+        --quiet 2>&1); then
         echo "$(date): Successfully created secondary IP range"
     else
-        echo "ERROR: Failed to create secondary IP range - cluster setup cannot proceed"
+        # ONE line prefixed ERROR, because the failure marker reports the last such line
+        # and it must carry the cause. Guidance goes under HINT so it does not displace it.
+        CREATE_WHY=$(echo "$CREATE_ERR" | grep -v '^$' | tail -1)
+        echo "ERROR: Failed to create mayanas-alias-range=$VIP_CIDR_RANGE in $SUBNET_NAME/$REGION: $CREATE_WHY"
+        echo "HINT: this range overlaps one the VPC already has. Secondary range CIDRs are"
+        echo "HINT:   unique VPC-wide, so deploying to another region will not avoid it."
+        echo "HINT: find a free block, then redeploy naming it:"
+        echo "HINT:   ./gcp-check-vip-range.sh -p <project> -r $REGION --create"
+        echo "HINT:   ./deploy-lustre.sh ... --vip-range <CIDR>"
         exit 1
     fi
 fi
