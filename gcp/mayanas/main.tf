@@ -36,10 +36,14 @@ resource "random_integer" "peer_resource_id" {
 data "external" "range_analysis" {
   program = ["bash", "-c", <<-EOT
     # Get all secondary ranges across VPC (simple list for conflict detection)
+    # --flatten is REQUIRED. Without it gcloud joins a subnet's ranges with ';' into ONE
+    # value ("10.9.0.0/24;10.100.108.128/25"), so the contains() collision filter below
+    # can never match a candidate /24 -- not even an EXACT duplicate.
     all_ranges=$(gcloud compute networks subnets list \
-      --format='value(secondaryIpRanges[].ipCidrRange)' \
+      --flatten='secondaryIpRanges[]' \
+      --format='value(secondaryIpRanges.ipCidrRange)' \
       --filter='network:${var.network_name}' \
-      --quiet 2>/dev/null | tr '\n' ',' | sed 's/,$//') || all_ranges=""
+      --quiet 2>/dev/null | grep -v '^$' | tr '\n' ',' | sed 's/,$//') || all_ranges=""
     
     # Get detailed subnet info with regions for debugging  
     ranges_with_regions=$(gcloud compute networks subnets list \
@@ -53,10 +57,15 @@ data "external" "range_analysis" {
     
     # Check for existing mayanas-alias-range in target subnet
     target_subnet="${var.subnet_name != "" ? var.subnet_name : "default"}"
+    # Same --flatten requirement, and match the range NAME exactly -- un-flattened, the
+    # grep matched the joined line and cut -f2 returned EVERY CIDR in the subnet, so
+    # can_reuse_existing failed its startswith test and each deploy created a NEW range
+    # instead of reusing its own. Exact match also avoids catching mayanas-alias-range1.
     existing_mayanas=$(gcloud compute networks subnets describe "$target_subnet" \
       --region="${var.region}" \
-      --format='value(secondaryIpRanges[].rangeName,secondaryIpRanges[].ipCidrRange)' \
-      --quiet 2>/dev/null | grep "mayanas-alias-range" | cut -f2 -d$'\t' || echo "")
+      --flatten='secondaryIpRanges[]' \
+      --format='value(secondaryIpRanges.rangeName,secondaryIpRanges.ipCidrRange)' \
+      --quiet 2>/dev/null | awk -F'\t' '$1=="mayanas-alias-range"{print $2}')
     
     echo "{\"vpc_ranges\": \"$all_ranges\", \"vpc_ranges_with_regions\": \"$ranges_with_regions\", \"existing_mayanas_range\": \"$existing_mayanas\"}"
   EOT

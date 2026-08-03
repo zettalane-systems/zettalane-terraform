@@ -140,7 +140,14 @@ echo "$(date): Using subnet: $SUBNET_NAME in region: $REGION"
 echo "$(date): Ensuring secondary IP range exists for VIP: $VIP_CIDR_RANGE"
 
 # Check if mayanas-alias-range already exists
-EXISTING_RANGE=$(gcloud compute networks subnets describe "$SUBNET_NAME" --region="$REGION" --format="value(secondaryIpRanges[].rangeName,secondaryIpRanges[].ipCidrRange)" | grep "mayanas-alias-range" | cut -f2 -d$'\t')
+# --flatten is REQUIRED: without it gcloud joins the list fields with ';' onto ONE line,
+# so a subnet with a second secondary range yields
+#     range1;mayanas-alias-range<TAB>10.9.0.0/24;10.100.108.0/24
+# and cut -f2 returns both CIDRs. That never equals VIP_CIDR_RANGE, so the branch below
+# decides our own range "conflicts" and deletes and recreates it on every boot. Invisible
+# until a subnet has more than one secondary range -- a VPC-native GKE cluster is enough.
+# Match the name exactly: a prefix match would also catch mayanas-alias-range1.
+EXISTING_RANGE=$(gcloud compute networks subnets describe "$SUBNET_NAME" --region="$REGION" --flatten='secondaryIpRanges[]' --format="value(secondaryIpRanges.rangeName,secondaryIpRanges.ipCidrRange)" | awk -F'\t' '$1=="mayanas-alias-range"{print $2}')
 
 if [ -n "$EXISTING_RANGE" ]; then
     echo "$(date): Secondary range 'mayanas-alias-range' already exists with CIDR: $EXISTING_RANGE"
