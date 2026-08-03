@@ -207,6 +207,49 @@ terraform init
 terraform apply
 ```
 
+## GCP VIP ranges
+
+On GCP the HA pair serves its floating VIPs as *alias IPs*, which must come from a
+secondary IP range on the subnet. The module adds one named `mayanas-alias-range` — a
+`/24` chosen from `10.100.0.0/16` — and both MayaNAS and MayaScale share it.
+
+On an ordinary VPC this needs no attention. Two things are worth knowing if yours
+already carries secondary ranges:
+
+- **Secondary range CIDRs are unique across the whole VPC**, not per subnet. A block
+  in use in `us-central1` cannot be reused in `us-west1`, so switching region does not
+  sidestep a collision.
+- **Auto-selection compares ranges as text**, so a range that *partially* overlaps a
+  candidate — `10.100.108.128/25` against the `10.100.108.0/24` the module wants — is
+  not detected, and GCP rejects it when the node boots.
+
+`gcp-check-vip-range.sh` shows what is already there and picks a block that fits:
+
+```bash
+./gcp-check-vip-range.sh -p my-project                    # list every range in the VPC
+./gcp-check-vip-range.sh -p my-project -r us-west1        # ... and what a deploy would use
+./gcp-check-vip-range.sh -p my-project -r us-west1 --auto # just the CIDR
+```
+
+Set it in your tfvars to pin the block explicitly — it takes precedence over both reuse
+and auto-selection:
+
+```hcl
+vip_cidr_range = "10.100.109.0/24"
+```
+
+`terraform destroy` leaves `mayanas-alias-range` in place on purpose: further HA pairs in
+the subnet draw their VIPs from it, so removing it would strip a running cluster's
+addresses. Clean it up when you are done with the region — it refuses while any instance
+still holds an alias IP from the range:
+
+```bash
+./gcp-check-vip-range.sh -p my-project -r us-west1 --delete
+```
+
+Full details, including what to do when a deploy stops on a range conflict:
+**[GCP-VIP-RANGES.md](GCP-VIP-RANGES.md)**.
+
 ## Pricing
 
 These modules deploy metered images from cloud marketplaces. You will be billed:
