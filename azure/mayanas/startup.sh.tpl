@@ -15,6 +15,27 @@ touch "$LOGFILE"
 chmod 640 "$LOGFILE"
 chown root:root "$LOGFILE"
 
+# Failure marker, the same file cluster_setup2.sh writes and the deploy script polls.
+# This script runs BEFORE cluster_setup2.sh, so until now its own fatal exits left no
+# trace at all: a watcher saw a node that never produced a setup log and waited out its
+# entire timeout with nothing to report. An EXIT trap covers every abnormal exit rather
+# than only the ones someone annotated.
+# NOTE: this is a terraform template -- a dollar-brace sequence is interpolated by
+# terraform ANYWHERE in the file, comments included, so shell vars are written unbraced
+# and a literal one must be doubled.
+_startup_exit_trap() {
+	_rc=$?
+	[ "$_rc" -eq 0 ] && return 0
+	mkdir -p /opt/mayastor/config 2>/dev/null || true
+	{
+		echo "$(date): startup script FAILED (exit $_rc)"
+		_why=$(grep -a '^ERROR' "$LOGFILE" 2>/dev/null | tail -1)
+		echo "reason: $${_why:-exited before completion; see the startup log}"
+	} > /opt/mayastor/config/.cluster-setup-failed 2>/dev/null || true
+	chmod 640 /opt/mayastor/config/.cluster-setup-failed 2>/dev/null || true
+}
+trap _startup_exit_trap EXIT
+
 echo "$(date): Starting MayaNAS ${deployment_type} deployment configuration..."
 
 # Check and install Azure CLI if needed
