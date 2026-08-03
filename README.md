@@ -62,10 +62,22 @@ cd zettalane-terraform
 
 # MayaScale - NVMe block storage
 ./validate-mayascale.sh --cloud gcp --project-id my-project --zone us-central1-a
-
-# Unified Lustre Data Platform (2-node active-active, Lustre + NFS + SMB)
-./deploy-lustre.sh --cloud gcp -p my-project -z us-central1-a -n lustre-eval
 ```
+
+### Unified Lustre Data Platform
+
+A 2-node active-active cluster serving Lustre, NFS and SMB from cloud object storage.
+The front end — `deploy-lustre.sh`, the client installer and their guides — lives in its
+own repository and clones these modules on first run:
+
+```bash
+git clone https://github.com/zettalane-systems/open-lustre-cloud.git
+cd open-lustre-cloud
+./deploy-lustre.sh --help
+```
+
+See that repository's README for the supported clouds and the full options. The
+`deploy-lustre.sh` still in this repository is a stub that points there.
 
 ## Validation Scripts
 
