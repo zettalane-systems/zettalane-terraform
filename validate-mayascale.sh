@@ -558,7 +558,10 @@ case "$CLOUD" in
             echo "       empty unless you set ami_id explicitly. Continuing anyway."
         else
             AWS_REGION_FOR_CHECK=$(aws configure get region 2>/dev/null || echo "us-east-1")
-            if ! aws ec2 describe-images --region "$AWS_REGION_FOR_CHECK" \
+            # Not on destroy: this one EXITS rather than prompting, so an unsubscribed
+            # (or since-unsubscribed) account could not tear down what it deployed.
+            if [ "$DESTROY_MODE" != "true" ] \
+                && ! aws ec2 describe-images --region "$AWS_REGION_FOR_CHECK" \
                     --owners aws-marketplace \
                     --filters "Name=product-code,Values=$MAYASCALE_PRODUCT_CODE" \
                     --query 'Images[0].ImageId' --output text 2>/dev/null \

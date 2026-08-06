@@ -387,7 +387,10 @@ case "$CLOUD" in
         # Product code matches aws/mayanas/variables.tf:mayanas_product_code.
         MAYANAS_PRODUCT_CODE="6uq8m459fufly3ohukewdcis1"
         AWS_REGION_FOR_CHECK=$(aws configure get region 2>/dev/null || echo "us-east-1")
-        if ! aws ec2 describe-images --region "$AWS_REGION_FOR_CHECK" \
+        # Not on destroy: this one EXITS rather than prompting, so an unsubscribed (or
+        # since-unsubscribed) account could not tear down what it had already deployed.
+        if [ "$DESTROY_MODE" != "true" ] \
+            && ! aws ec2 describe-images --region "$AWS_REGION_FOR_CHECK" \
                 --owners aws-marketplace \
                 --filters "Name=product-code,Values=$MAYANAS_PRODUCT_CODE" \
                 --query 'Images[0].ImageId' --output text 2>/dev/null \
@@ -428,7 +431,14 @@ case "$CLOUD" in
         AZURE_PLAN_PUB="zettalane_systems-5254599"
         AZURE_PLAN_OFFER="mayanas-cloud-ent"
         AZURE_PLAN_NAME="mayanas-cloud-ent"
-        if [ -n "$IMAGE_ID" ]; then
+        if [ "$DESTROY_MODE" = "true" ]; then
+            # Destroy provisions no VM, so no plan is ever purchased. Callers also stop
+            # passing --image-id on teardown, which used to drop us into the check below
+            # and prompt for the PAID plan's terms while tearing down a community
+            # deployment that never used it.
+            log "--destroy: nothing is provisioned — skipping Marketplace plan-terms check"
+            ACCEPTED="True"
+        elif [ -n "$IMAGE_ID" ]; then
             log "Explicit image (no publisher plan) — skipping Marketplace plan-terms check"
             ACCEPTED="True"
         else
