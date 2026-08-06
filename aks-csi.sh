@@ -160,10 +160,17 @@ if ! az network vnet subnet show -g "$RG" --vnet-name "$VNET" -n "$AKS_SUBNET" >
   az network vnet subnet create -g "$RG" --vnet-name "$VNET" -n "$AKS_SUBNET" \
     --address-prefixes "$AKS_SUBNET_CIDR" >/dev/null
 fi
-if [ -n "$ROUTE_TABLE" ]; then
+# Only when the route table actually exists. HA deploys create one because the VIPs sit
+# OUTSIDE every subnet CIDR and need next-hops to the storage NICs; a SINGLE-NODE deploy
+# has no floating VIP -- the "VIP" is the node's own address inside the storage subnet,
+# reachable by ordinary VNet routing. Attaching a non-existent table just fails the run.
+if [ -n "$ROUTE_TABLE" ] \
+   && az network route-table show -g "$RG" -n "$ROUTE_TABLE" >/dev/null 2>&1; then
   log "associating route table $ROUTE_TABLE with $AKS_SUBNET (VIP reachability)"
   az network vnet subnet update -g "$RG" --vnet-name "$VNET" -n "$AKS_SUBNET" \
     --route-table "$ROUTE_TABLE" >/dev/null
+elif [ -n "$ROUTE_TABLE" ]; then
+  log "no route table $ROUTE_TABLE -- single-node storage, VIP is inside the VNet already"
 fi
 SUBNET_ID=$(az network vnet subnet show -g "$RG" --vnet-name "$VNET" -n "$AKS_SUBNET" --query id -o tsv)
 
