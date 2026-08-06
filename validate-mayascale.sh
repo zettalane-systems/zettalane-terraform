@@ -602,7 +602,14 @@ case "$CLOUD" in
         AZURE_PLAN_PUB="zettalane_systems-5254599"
         AZURE_PLAN_OFFER="mayascale-cloud-ent"
         AZURE_PLAN_NAME="mayascale-cloud-ent"
-        if [ -n "$IMAGE_ID" ]; then
+        if [ "$DESTROY_MODE" = "true" ]; then
+            # Destroy provisions no VM, so no plan is ever purchased. Callers also stop
+            # passing --image-id on teardown (deploy-zettabranch.sh does), which used to
+            # drop us into the check below and prompt for the PAID plan's terms while
+            # tearing down a community-gallery deployment that never used it.
+            log "--destroy: nothing is provisioned — skipping Marketplace plan-terms check"
+            ACCEPTED="True"
+        elif [ -n "$IMAGE_ID" ]; then
             log "Explicit image (no publisher plan) — skipping Marketplace plan-terms check"
             ACCEPTED="True"
         else
