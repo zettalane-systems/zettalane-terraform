@@ -31,6 +31,10 @@
 #   --node-type <size>     VM size (default: Standard_D4s_v5)
 #   --zone <z>             AZ to pin nodes to (default: none -- westus has no zones)
 #   --spot                 spot node pool (cheaper; fine for the CSI test side)
+#   --create-only          build the CLUSTER and its network, then stop -- no driver, so
+#                          no --backend-json needed. For a greenfield deploy: create the
+#                          cluster first, then `deploy-zettabranch.sh --aks <name>` does
+#                          storage + driver + platform in one go.
 #   --cleanup              helm uninstall + `az aks delete`, then exit
 # Env (defaults target the running csitest3 storage cluster):
 #   SUBSCRIPTION (6aa9a5b8-...), RG (mayanas-testing), LOCATION (westus),
@@ -53,7 +57,7 @@ derive_storage_nsg() {
   return 1
 }
 
-BACKEND_JSON=""; CLEANUP=0
+BACKEND_JSON=""; CLEANUP=0; CREATE_ONLY=0
 CLUSTER="${CLUSTER:-zettalane-csi-aks}"
 ACR="${ACR:-}"
 NODES="${NODES:-2}"
@@ -114,6 +118,7 @@ while [ $# -gt 0 ]; do
     --no-open-nsg)  OPEN_NSG=0;        shift ;;
     --spot)         SPOT=1;            shift ;;
     --cleanup)      CLEANUP=1;         shift ;;
+    --create-only)  CREATE_ONLY=1;     shift ;;
     -h|--help)      grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) fail "unknown arg: $1 (try --help)" ;;
   esac
@@ -146,8 +151,13 @@ if [ "$CLEANUP" -eq 1 ]; then
   exit 0
 fi
 
-[ -n "$BACKEND_JSON" ] && [ -f "$BACKEND_JSON" ] || fail "--backend-json <file> is required"
-[ -n "$IMAGE_REF" ] || fail "no image: pass --acr <name> (image pushed there) or --image <ref>"
+# Only the DRIVER install reads it (driver name, VIP list, pools). Creating the cluster
+# and its network needs nothing from the storage side -- which is the whole point of
+# --create-only: on a greenfield deploy there IS no storage yet.
+if [ "$CREATE_ONLY" != 1 ]; then
+  [ -n "$BACKEND_JSON" ] && [ -f "$BACKEND_JSON" ] || fail "--backend-json <file> is required"
+  [ -n "$IMAGE_REF" ] || fail "no image: pass --acr <name> (image pushed there) or --image <ref>"
+fi
 DRIVER=$(jq -r '.driver' "$BACKEND_JSON")
 case "$DRIVER" in mayascale|mayanas|mayanas-lustre) : ;; *) fail "bad driver in backend: $DRIVER" ;; esac
 VIPLIST=$(jq -r --arg d "$DRIVER" '.[$d]' "$BACKEND_JSON")
@@ -181,7 +191,10 @@ SUBNET_ID=$(az network vnet subnet show -g "$RG" --vnet-name "$VNET" -n "$AKS_SU
 # ---- open the storage NSG so the AKS subnet can reach the NVMeoF ports -------
 # NVMeoF is not world-exposed: the storage NSG admits only allowed_nvmeof_cidrs
 # (default = storage subnet). Add an inbound allow for our AKS subnet (idempotent).
-if [ "$OPEN_NSG" = "1" ]; then
+# --create-only runs BEFORE any storage exists, so there is no NSG to open -- and none is
+# needed: deploying with `--aks <cluster>` passes this node subnet as allowed_nvmeof_cidrs,
+# so the storage NSG is born with the rule instead of being patched afterwards.
+if [ "$OPEN_NSG" = "1" ] && [ "$CREATE_ONLY" != 1 ]; then
   [ -n "$STORAGE_NSG" ] || STORAGE_NSG=$(derive_storage_nsg) || \
     fail "could not find the storage NVMeoF NSG; pass --storage-nsg <name> (or --no-open-nsg)"
   RULE="Allow-NVMeoF-$(echo "$AKS_SUBNET_CIDR" | tr './' '--')"
@@ -207,6 +220,7 @@ else
     ${ZONE:+--zones "$ZONE"} \
     ${SPOT:+--priority Spot --eviction-policy Delete --spot-max-price -1} \
     ${ACR:+--attach-acr "$ACR"} \
+    --tags zettalane-created=true \
     --generate-ssh-keys
 fi
 az aks get-credentials -g "$RG" -n "$CLUSTER" --overwrite-existing
@@ -240,6 +254,22 @@ spec:
             echo "nvme_tcp loaded; sleeping"; sleep infinity
 EOF
 kubectl -n kube-system rollout status ds/nvme-tcp-loader --timeout=180s
+
+# ---- create-only: stop here ------------------------------------------------
+# The cluster and its network exist; the driver comes later, with the storage. Deploying
+# storage next with `--aks <this cluster>` puts it in THIS VNet and authorises this node
+# subnet for nvme-of, so nothing here needs to know the storage endpoints yet.
+if [ "$CREATE_ONLY" = 1 ]; then
+  NODE_CIDR=$(az network vnet subnet show -g "$RG" --vnet-name "$VNET" -n "$AKS_SUBNET" \
+      --query addressPrefix -o tsv 2>/dev/null || echo "$AKS_SUBNET_CIDR")
+  log "cluster '$CLUSTER' ready (vnet=$VNET subnet=$AKS_SUBNET $NODE_CIDR). No driver installed."
+  echo
+  echo "  Next -- storage, driver and platform in one command:"
+  echo "      ./deploy-zettabranch.sh --cloud azure -g $RG -n <deployment> -l $LOCATION \\"
+  echo "          -p <subscription> --aks $CLUSTER"
+  echo
+  exit 0
+fi
 
 # ---- helm values (NATIVE: ordinary pod networking, ACR image) --------------
 # No hostNetwork / no priorityClassName override -- the GKE-only workarounds.
