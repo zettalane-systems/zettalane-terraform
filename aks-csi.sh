@@ -36,7 +36,7 @@
 #   SUBSCRIPTION (6aa9a5b8-...), RG (mayanas-testing), LOCATION (westus),
 #   VNET (mayascale-vnet), AKS_SUBNET (aks-csi-subnet), AKS_SUBNET_CIDR
 #   (10.0.20.0/24), ROUTE_TABLE (mayanas-route-table), CHART_VERSION (1.0.0),
-#   IMAGE_VERSION (1.0.1)
+#   IMAGE_VERSION (1.0.6 -- must be >= 1.0.6 for single-node)
 
 set -euo pipefail
 log()  { echo "[aks-csi] $*"; }
@@ -92,8 +92,12 @@ SERVICE_CIDR="${SERVICE_CIDR:-192.168.100.0/24}"
 DNS_SERVICE_IP="${DNS_SERVICE_IP:-192.168.100.10}"
 # Chart and image are versioned INDEPENDENTLY: the chart tracks its own line
 # (published 1.0.0), the image tracks the driver build (1.0.11).
+# Track the CURRENT published driver, not the version this script was written against.
+# 1.0.1 predates the single-node ownerServer fallback (838ee93, shipped in 1.0.6), so a
+# zfs-single deployment fails every snapshot with "cannot locate the owning node ...
+# refusing to route a mutation to an arbitrary node" -- which reads like a storage bug.
 CHART_VERSION="${CHART_VERSION:-1.0.0}"
-IMAGE_VERSION="${IMAGE_VERSION:-1.0.1}"
+IMAGE_VERSION="${IMAGE_VERSION:-1.0.6}"
 NS="zettalane-csi"
 
 while [ $# -gt 0 ]; do
