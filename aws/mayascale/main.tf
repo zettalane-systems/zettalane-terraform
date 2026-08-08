@@ -216,14 +216,20 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
-data "aws_vpc" "default" {
-  default = true
+# The VPC we are deploying INTO -- var.vpc_id when given, else the account default.
+# Named "selected", not "default": as `default = true` it always resolved to the account
+# default VPC even when vpc_id named another one, so the security group below opened the
+# wrong CIDR and clients in the real VPC were silently refused. Setting an argument to
+# null is the same as omitting it, which is how one data source serves both cases.
+data "aws_vpc" "selected" {
+  id      = var.vpc_id != "" ? var.vpc_id : null
+  default = var.vpc_id == "" ? true : null
 }
 
 data "aws_subnets" "default" {
   filter {
     name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
+    values = [data.aws_vpc.selected.id]
   }
 }
 
@@ -396,7 +402,7 @@ resource "aws_iam_role_policy" "mayascale_s3" {
 resource "aws_security_group" "mayascale_sg" {
   name        = "${local.cluster_name}-sg"
   description = "Security group for MayaScale cluster"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = data.aws_vpc.selected.id
 
   # SSH
   ingress {
@@ -440,7 +446,7 @@ resource "aws_security_group" "mayascale_sg" {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = [data.aws_vpc.default.cidr_block]
+    cidr_blocks = [data.aws_vpc.selected.cidr_block]
     description = "All traffic from VPC (NVMe-oF and all other services for clients)"
   }
 
