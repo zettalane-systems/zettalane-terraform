@@ -24,16 +24,17 @@ success()  { echo -e "${GREEN}[$(date '+%H:%M:%S')]${NC} $1"; }
 warn()     { echo -e "${YELLOW}[$(date '+%H:%M:%S')]${NC} $1"; }
 fail()     { echo -e "${RED}[$(date '+%H:%M:%S')]${NC} $1"; }
 
-# The client-testing dir is shared across deploys; a tfstate left from a different
-# RG makes terraform refresh a prior cluster's resources. If state has managed
-# resources but none in the target RG, move it aside (back up, don't delete).
+# Both the storage and client dirs are reused across deploys; a tfstate left from a
+# different RG makes terraform refresh a prior cluster's resources -- or, worse, makes the
+# "existing deployment" check below think there is something to reuse. If state has
+# managed resources but none in the target RG, move it aside (back up, don't delete).
 client_state_guard() {
-    local st="$1/terraform.tfstate" rg="$2"
+    local st="$1/terraform.tfstate" rg="$2" what="${3:-client}"
     [ -f "$st" ] || return 0
     if grep -q '/resourceGroups/' "$st" 2>/dev/null && \
        ! grep -qi "/resourceGroups/${rg}/" "$st" 2>/dev/null; then
         local bak="${st}.stale.$(date +%Y%m%d_%H%M%S)"
-        warn "Stale client state (no resources in RG '$rg') -> moving aside: $bak"
+        warn "Stale $what state (no resources in RG '$rg') -> moving aside: $bak"
         mv "$st" "$bak"
         [ -f "${st}.backup" ] && mv "${st}.backup" "${bak}.backup"
     fi
@@ -95,6 +96,15 @@ POLICY="zonal-standard-performance"
 MACHINE_TYPE=""
 CLIENT_MACHINE_TYPE=""
 SKIP_CLIENT="false"
+# Existing-network passthrough. The azure module has always supported an existing VNet
+# (vnet_name/subnet_name, "leave empty to create new"); this exposes it. Needed when the
+# storage must land in a VNet somebody else owns -- e.g. beside a managed Kubernetes
+# cluster, where peering to a VNet we invented is the alternative.
+VNET_NAME_ARG=""
+SUBNET_NAME_ARG=""
+NVMEOF_CIDRS=""
+VPC_ID_ARG=""          # aws: existing VPC (vpc_id)
+SUBNET_ID_ARG=""       # aws: existing subnet (subnet_id_primary)
 SSH_PUBLIC_KEY=""
 DESTROY_MODE="false"
 USE_SPOT="false"
@@ -348,6 +358,8 @@ while [[ $# -gt 0 ]]; do
             BUCKET_COUNT="$2"
             shift 2
             ;;
+        --check-args)
+            CHECK_ARGS=1; shift ;;
         --policy|-o)
             POLICY="$2"
             shift 2
@@ -379,6 +391,24 @@ while [[ $# -gt 0 ]]; do
         --skip-client)
             SKIP_CLIENT="true"
             shift
+            ;;
+        --vnet)
+            VNET_NAME_ARG="$2"; shift 2
+            ;;
+        --subnet)
+            SUBNET_NAME_ARG="$2"; shift 2
+            ;;
+        --vpc-id)
+            VPC_ID_ARG="$2"; shift 2
+            ;;
+        --subnet-id)
+            SUBNET_ID_ARG="$2"; shift 2
+            ;;
+        --nvmeof-cidrs)
+            # Storage restricts nvme-of to allowed_nvmeof_cidrs; a client outside the
+            # storage subnet (a managed cluster's node subnet) must be listed here or the
+            # PVC provisions and the ATTACH hangs with nothing useful in the logs.
+            NVMEOF_CIDRS="$2"; shift 2
             ;;
         --csi)
             CSI_MODE="true"
@@ -717,6 +747,15 @@ fi
 
 cd "$TF_DIR" || { fail "Cannot access terraform directory: $TF_DIR"; exit 1; }
 
+# --check-args: everything above this line is validation; everything below creates
+# something. A caller that is about to build a cluster of its own runs this first, so a
+# bad flag costs nothing. It stays honest because it IS this script's own checking, not
+# a copy of the rules kept somewhere else.
+if [ "${CHECK_ARGS:-0}" = 1 ]; then
+    log "arguments OK (--check-args: nothing deployed)"
+    exit 0
+fi
+
 # Create results directory
 RESULTS_DIR="$SCRIPT_DIR/mayascale-results/${CLOUD}_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$RESULTS_DIR"
@@ -923,6 +962,10 @@ adopt_placement_policy() {
 }
 
 # Deploy storage
+# Drop a tfstate belonging to a DIFFERENT resource group before deciding whether a
+# deployment already exists -- otherwise a state full of resources from a deleted RG
+# reads as "reuse this" and the deploy is skipped entirely.
+[ -n "${RESOURCE_GROUP:-}" ] && client_state_guard "$TF_DIR" "$RESOURCE_GROUP" storage
 if [ "$SKIP_DEPLOY" = "true" ]; then
     log "Skipping deployment (--skip-deploy specified)"
     if [ ! -f "terraform.tfstate" ]; then
@@ -930,7 +973,10 @@ if [ "$SKIP_DEPLOY" = "true" ]; then
         exit 1
     fi
 elif [ -f "terraform.tfstate" ]; then
-    EXISTING_IP=$(terraform output -raw node1_private_ip 2>/dev/null || echo "")
+    # -json, not -raw: with no outputs, `terraform output -raw` writes its warning banner
+    # to STDOUT, which then reads as a perfectly good IP and skips the deploy.
+    EXISTING_IP=$(terraform output -json 2>/dev/null \
+                  | jq -r '.node1_private_ip.value // empty' 2>/dev/null || echo "")
     if [ -n "$EXISTING_IP" ] && [ "$EXISTING_IP" != "null" ]; then
         log "Existing deployment found - reusing (run with -d to destroy first)"
     else
@@ -992,6 +1038,8 @@ assign_public_ip = $ASSIGN_PUBLIC_IP
 ssh_cidr_blocks = ["0.0.0.0/0"]
 availability_zone = "$AWS_AZ"
 $([ -n "$IMAGE_ID" ] && echo "ami_id = \"$IMAGE_ID\"")
+$([ -n "$VPC_ID_ARG" ] && echo "vpc_id = \"$VPC_ID_ARG\"")
+$([ -n "$NVMEOF_CIDRS" ] && echo "client_access_control = [\"${NVMEOF_CIDRS//,/\", \"}\"]")
 EOF
             # AWS placement group auto-created for zonal non-spot
             ;;
@@ -1010,6 +1058,9 @@ assign_public_ip = $ASSIGN_PUBLIC_IP
 $([ -n "$SSH_PUBLIC_KEY" ] && echo "ssh_public_key = \"$SSH_PUBLIC_KEY\"")
 mayascale_startup_wait= 10
 $([ -n "$IMAGE_ID" ] && echo "vm_image_id=\"$IMAGE_ID\"")
+$([ -n "$VNET_NAME_ARG" ] && echo "vnet_name = \"$VNET_NAME_ARG\"")
+$([ -n "$SUBNET_NAME_ARG" ] && echo "subnet_name = \"$SUBNET_NAME_ARG\"")
+$([ -n "$NVMEOF_CIDRS" ] && echo "allowed_nvmeof_cidrs = [\"${NVMEOF_CIDRS//,/\", \"}\"]")
 EOF
             if [ -n "$RESOURCE_GROUP" ]; then
                 echo "resource_group_name = \"$RESOURCE_GROUP\"" >> terraform.tfvars
@@ -1095,8 +1146,8 @@ client_name = "${DEPLOYMENT_NAME}-client"
 ssh_public_key = "$SSH_PUBLIC_KEY"
 # Azure: client shares the storage vnet (fixed mayascale-vnet) -- a per-deployment
 # vnet would duplicate the VIP address space. Matches storage module default.
-vnet_name = "mayascale-vnet"
-subnet_name = "mayascale-subnet"
+vnet_name = "${VNET_NAME_ARG:-mayascale-vnet}"
+subnet_name = "${SUBNET_NAME_ARG:-mayascale-subnet}"
 use_spot = $USE_SPOT
 admin_username = "mayascale"
 vm_size = "$CLIENT_MACHINE_TYPE"
@@ -1404,6 +1455,34 @@ else
 fi
 
 # Wait for client deployment and run NVMe tests
+# csi_backend.json describes the STORAGE, so it must be buildable whether or not a
+# client exists -- with --skip-client the platform goes on a cluster you bring, and
+# that installer still needs this file. Only the copy-to-client is client-specific.
+    build_csi_backend() {
+        local drv="${1:-$CSI_DRIVER}"
+        local raw; raw=$(terraform output -json csi_backend 2>/dev/null) || return 1
+        [ -n "$raw" ] || return 1
+        if [ "$FSX_MODE" = "true" ]; then
+            # Match pools to nodes by VIP order (vip1->node1->data-pool-1), robust whether
+            # the output has stale vg names or already-correct data-pool-N names.
+            echo "$raw" | jq --arg drv "$drv" '
+                (.mayascale // .mayanas) as $vips
+                | ($vips | split(",")) as $vl
+                | (.pools | to_entries | map(.value) | unique_by(.vip)) as $n
+                | { driver: $drv, ($drv): $vips,
+                    pools: (
+                      {"data-pool-1": ($n | map(select(.vip==$vl[0]))[0])}
+                      + (if ($vl|length) > 1
+                         then {"data-pool-2": ($n | map(select(.vip==$vl[1]))[0])}
+                         else {} end) ),
+                    zone_cluster_map: .zone_cluster_map }'
+        else
+            echo "$raw" | jq --arg drv "$drv" '
+                (.mayascale // .mayanas) as $vips
+                | del(.mayascale, .mayanas) | .driver = $drv | .[$drv] = $vips'
+        fi
+    }
+
 if [ "$SKIP_CLIENT" = "false" ]; then
     echo ""
 
@@ -1498,30 +1577,6 @@ if [ "$SKIP_CLIENT" = "false" ]; then
         # node-level clusterid/VIP pairs (correct in the output regardless of pool naming)
         # onto those names. CSI_DRIVER (--csi) sets the product (mayascale=block/zvol,
         # mayanas=file/NFS) + the driver-named VIP-list key. Works on --skip-deploy resume.
-        build_csi_backend() {
-            local drv="${1:-$CSI_DRIVER}"
-            local raw; raw=$(terraform output -json csi_backend 2>/dev/null) || return 1
-            [ -n "$raw" ] || return 1
-            if [ "$FSX_MODE" = "true" ]; then
-                # Match pools to nodes by VIP order (vip1->node1->data-pool-1), robust whether
-                # the output has stale vg names or already-correct data-pool-N names.
-                echo "$raw" | jq --arg drv "$drv" '
-                    (.mayascale // .mayanas) as $vips
-                    | ($vips | split(",")) as $vl
-                    | (.pools | to_entries | map(.value) | unique_by(.vip)) as $n
-                    | { driver: $drv, ($drv): $vips,
-                        pools: (
-                          {"data-pool-1": ($n | map(select(.vip==$vl[0]))[0])}
-                          + (if ($vl|length) > 1
-                             then {"data-pool-2": ($n | map(select(.vip==$vl[1]))[0])}
-                             else {} end) ),
-                        zone_cluster_map: .zone_cluster_map }'
-            else
-                echo "$raw" | jq --arg drv "$drv" '
-                    (.mayascale // .mayanas) as $vips
-                    | del(.mayascale, .mayanas) | .driver = $drv | .[$drv] = $vips'
-            fi
-        }
 
         # CSI mode: vg-active-active (always) OR --csi (any substrate). No auto-exported
         # volumes -- stage CSI inputs (csi_backend.json + scripts), skip connect+fio.
@@ -1628,6 +1683,24 @@ EOF
             warn "FIO test script not found: $FIO_SCRIPT"
         fi
         fi
+    fi
+fi
+
+# --skip-client: there is no client to stage onto, but csi_backend.json describes the
+# STORAGE and is still needed -- it is the one input the managed-Kubernetes installer
+# (install-zettabranch-k8s.sh) and the per-cloud aks/gke/eks-csi.sh scripts take. Without
+# this, a --skip-client deploy left no backend file at all and callers silently picked up
+# a STALE one from an earlier run, pointing the driver at storage that no longer exists.
+if [ "$SKIP_CLIENT" = "true" ] && [ "$CSI_MODE" = "true" ]; then
+    cd "$TF_DIR" 2>/dev/null || true          # build_csi_backend reads `terraform output`
+    if build_csi_backend "$CSI_DRIVER" > "$RESULTS_DIR/csi_backend.json" 2>/dev/null \
+       && [ -s "$RESULTS_DIR/csi_backend.json" ]; then
+        success "Wrote csi_backend.json (driver=$CSI_DRIVER) -> $RESULTS_DIR/csi_backend.json"
+        echo "         install onto your own cluster:"
+        echo "           ./install-zettabranch-k8s.sh --backend-json $RESULTS_DIR/csi_backend.json"
+    else
+        rm -f "$RESULTS_DIR/csi_backend.json"  # never leave a truncated file to be found later
+        warn "could not build csi_backend.json (need jq + a valid csi_backend output)"
     fi
 fi
 
