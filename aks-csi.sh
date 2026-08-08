@@ -58,6 +58,11 @@ derive_storage_nsg() {
 }
 
 BACKEND_JSON=""; CLEANUP=0; CREATE_ONLY=0
+# Stamped on a cluster ONLY when the deployer creates one for a specific deployment.
+# A cluster you build with this script by hand carries no stamp, so nothing will ever
+# delete it -- "created by this tooling" is not the same as "disposable".
+OWNER_DEPLOYMENT="${OWNER_DEPLOYMENT:-}"
+NO_CREATE=0   # refuse to create; the caller says a cluster already exists
 CLUSTER="${CLUSTER:-zettalane-csi-aks}"
 ACR="${ACR:-}"
 NODES="${NODES:-2}"
@@ -72,6 +77,7 @@ LOCATION="${LOCATION:-}"
 VNET="${VNET:-mayascale-vnet}"
 AKS_SUBNET="${AKS_SUBNET:-aks-csi-subnet}"
 AKS_SUBNET_CIDR="${AKS_SUBNET_CIDR:-10.0.20.0/24}"
+VNET_CIDR="${VNET_CIDR:-10.0.0.0/16}"   # only used when the VNet has to be created
 ROUTE_TABLE="${ROUTE_TABLE:-mayanas-route-table}"
 [ -n "$SUBSCRIPTION" ] || { echo "SUBSCRIPTION not set and 'az account show' gave nothing -- run 'az login'" >&2; exit 2; }
 [ -n "$RG" ] || { echo "RG=<resource-group> required (the storage deployment's RG)" >&2; exit 2; }
@@ -101,7 +107,11 @@ DNS_SERVICE_IP="${DNS_SERVICE_IP:-192.168.100.10}"
 # zfs-single deployment fails every snapshot with "cannot locate the owning node ...
 # refusing to route a mutation to an arbitrary node" -- which reads like a storage bug.
 CHART_VERSION="${CHART_VERSION:-1.0.0}"
-IMAGE_VERSION="${IMAGE_VERSION:-1.0.6}"
+# One source of truth for the driver image (see csi-version.env: the bundled mayacli
+# is in XDR lockstep with configd, so this is pinned and shared, never per-script).
+_CSI_ENV="$(dirname "$0")/csi-version.env"
+[ -r "$_CSI_ENV" ] && . "$_CSI_ENV"
+IMAGE_VERSION="${IMAGE_VERSION:-${CSI_IMAGE_VERSION:-1.0.6}}"
 NS="zettalane-csi"
 
 while [ $# -gt 0 ]; do
@@ -119,6 +129,8 @@ while [ $# -gt 0 ]; do
     --spot)         SPOT=1;            shift ;;
     --cleanup)      CLEANUP=1;         shift ;;
     --create-only)  CREATE_ONLY=1;     shift ;;
+    --no-create)    NO_CREATE=1;       shift ;;
+    --owner)        OWNER_DEPLOYMENT="$2"; shift 2 ;;
     -h|--help)      grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) fail "unknown arg: $1 (try --help)" ;;
   esac
@@ -154,21 +166,45 @@ fi
 # Only the DRIVER install reads it (driver name, VIP list, pools). Creating the cluster
 # and its network needs nothing from the storage side -- which is the whole point of
 # --create-only: on a greenfield deploy there IS no storage yet.
-if [ "$CREATE_ONLY" != 1 ]; then
+if [ "$CREATE_ONLY" = 1 ]; then
+  # Nothing below is knowable yet: there is no storage, so no backend json, no driver
+  # name, no VIPs. The cluster and its network do not depend on any of it.
+  DRIVER=""; VIPLIST=""; RELEASE=""
+  log "create-only: cluster + network only, no driver (no storage endpoints needed yet)"
+else
   [ -n "$BACKEND_JSON" ] && [ -f "$BACKEND_JSON" ] || fail "--backend-json <file> is required"
   [ -n "$IMAGE_REF" ] || fail "no image: pass --acr <name> (image pushed there) or --image <ref>"
+  DRIVER=$(jq -r '.driver' "$BACKEND_JSON")
+  case "$DRIVER" in mayascale|mayanas|mayanas-lustre) : ;; *) fail "bad driver in backend: $DRIVER" ;; esac
+  VIPLIST=$(jq -r --arg d "$DRIVER" '.[$d]' "$BACKEND_JSON")
+  [ -n "$VIPLIST" ] && [ "$VIPLIST" != "null" ] || fail "csi_backend.$DRIVER (VIP list) missing"
+  RELEASE="csi-$DRIVER"
+  IMG_REGISTRY="${IMAGE_REF%:*}"; IMG_TAG="${IMAGE_REF##*:}"
+  log "driver=$DRIVER  VIPs=$VIPLIST  image=$IMAGE_REF  chart=$CHART"
 fi
-DRIVER=$(jq -r '.driver' "$BACKEND_JSON")
-case "$DRIVER" in mayascale|mayanas|mayanas-lustre) : ;; *) fail "bad driver in backend: $DRIVER" ;; esac
-VIPLIST=$(jq -r --arg d "$DRIVER" '.[$d]' "$BACKEND_JSON")
-[ -n "$VIPLIST" ] && [ "$VIPLIST" != "null" ] || fail "csi_backend.$DRIVER (VIP list) missing"
-RELEASE="csi-$DRIVER"
-IMG_REGISTRY="${IMAGE_REF%:*}"; IMG_TAG="${IMAGE_REF##*:}"
-log "driver=$DRIVER  VIPs=$VIPLIST  image=$IMAGE_REF  chart=$CHART"
 
 # ---- AKS subnet in the storage VNet + the VIP route table ------------------
 # Pods (Azure CNI node-subnet) take IPs from this subnet; the route table makes
 # the VIP /32s reachable (next hop = storage node NICs).
+# Create the VNet too when it is missing -- on a greenfield deploy nothing exists yet, and
+# the storage will JOIN this network afterwards (deploy-zettabranch --aks <cluster> derives
+# it), so this is the network both halves share. VNET_CIDR leaves 10.0.1.0/24 and
+# 10.0.2.0/24 free: the storage module puts its own subnets there.
+# On a greenfield run the resource group may not exist yet either: normally terraform
+# creates it, but --create-only runs BEFORE any storage. Create it (tagged, so a later
+# teardown can tell it was ours) rather than failing on the first network call.
+if [ "$(az group exists -n "$RG" --subscription "$SUBSCRIPTION" 2>/dev/null)" != "true" ]; then
+  [ -n "$LOCATION" ] || fail "resource group $RG does not exist and LOCATION is unset"
+  log "creating resource group $RG in $LOCATION"
+  az group create -n "$RG" -l "$LOCATION" --subscription "$SUBSCRIPTION" \
+    --tags zettalane-created=true >/dev/null || fail "could not create resource group $RG"
+fi
+if ! az network vnet show -g "$RG" -n "$VNET" >/dev/null 2>&1; then
+  log "creating VNet $VNET (${VNET_CIDR}) -- storage will join it later"
+  az network vnet create -g "$RG" -n "$VNET" --location "$LOCATION" \
+    --address-prefixes "$VNET_CIDR" >/dev/null \
+    || fail "could not create VNet $VNET"
+fi
 if ! az network vnet subnet show -g "$RG" --vnet-name "$VNET" -n "$AKS_SUBNET" >/dev/null 2>&1; then
   log "creating AKS subnet $AKS_SUBNET ($AKS_SUBNET_CIDR) in $VNET"
   az network vnet subnet create -g "$RG" --vnet-name "$VNET" -n "$AKS_SUBNET" \
@@ -211,6 +247,10 @@ fi
 # ---- create the AKS cluster (Azure CNI, same VNet, ACR attached) ------------
 if az aks show -g "$RG" -n "$CLUSTER" >/dev/null 2>&1; then
   log "AKS cluster $CLUSTER already exists"
+elif [ "$NO_CREATE" = 1 ]; then
+  fail "no AKS cluster $CLUSTER in resource group $RG -- refusing to create one.
+       Check -g/--resource-group: a wrong group here builds a DUPLICATE cluster of the
+       same name."
 else
   log "creating AKS cluster $CLUSTER ($NODES x $NODE_TYPE${SPOT:+ spot}, Azure CNI, vnet=$VNET)"
   az aks create -g "$RG" -n "$CLUSTER" --location "$LOCATION" \
@@ -220,7 +260,7 @@ else
     ${ZONE:+--zones "$ZONE"} \
     ${SPOT:+--priority Spot --eviction-policy Delete --spot-max-price -1} \
     ${ACR:+--attach-acr "$ACR"} \
-    --tags zettalane-created=true \
+    --tags zettalane-created=true ${OWNER_DEPLOYMENT:+zettalane-deployment="$OWNER_DEPLOYMENT"} \
     --generate-ssh-keys
 fi
 az aks get-credentials -g "$RG" -n "$CLUSTER" --overwrite-existing

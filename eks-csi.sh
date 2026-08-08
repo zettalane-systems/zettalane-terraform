@@ -66,13 +66,23 @@ ECR="${ECR:-}"
 NODES="${NODES:-2}"
 NODE_TYPE="${NODE_TYPE:-m5.large}"
 REGION="${REGION:-us-east-1}"
+# Refuse to create; the caller says a cluster already exists. Without this, a wrong
+# --region silently builds an ENTIRE second EKS cluster (control plane + nodegroup)
+# instead of finding the one you meant.
+NO_CREATE=0
+CREATE_ONLY=0                     # build the cluster then stop -- no storage exists yet
+OWNER_DEPLOYMENT="${OWNER_DEPLOYMENT:-}"   # stamped only when a deployer owns this cluster
 VPC_ID="${VPC_ID:-}"
 AZ=""
 SPOT=""
 # Chart and image are versioned INDEPENDENTLY: the chart tracks its own line
 # (published 1.0.0), the image tracks the driver build (1.0.1).
 CHART_VERSION="${CHART_VERSION:-1.0.0}"
-IMAGE_VERSION="${IMAGE_VERSION:-1.0.1}"
+# One source of truth for the driver image (see csi-version.env: the bundled mayacli
+# is in XDR lockstep with configd, so this is pinned and shared, never per-script).
+_CSI_ENV="$(dirname "$0")/csi-version.env"
+[ -r "$_CSI_ENV" ] && . "$_CSI_ENV"
+IMAGE_VERSION="${IMAGE_VERSION:-${CSI_IMAGE_VERSION:-1.0.6}}"
 # external-snapshotter (CRDs + controller) — EKS doesn't ship it.
 SNAPSHOTTER_VERSION="${SNAPSHOTTER_VERSION:-v8.2.0}"
 INSTALL_SNAPSHOTTER="${INSTALL_SNAPSHOTTER:-1}"
@@ -93,6 +103,10 @@ while [ $# -gt 0 ]; do
     --image)        IMAGE_REF="$2";    shift 2 ;;
     --chart)        CHART="$2";        shift 2 ;;
     --cluster)      CLUSTER="$2";      shift 2 ;;
+    --region)       REGION="$2";       shift 2 ;;
+    --no-create)    NO_CREATE=1;       shift ;;
+    --create-only)  CREATE_ONLY=1;     shift ;;
+    --owner)        OWNER_DEPLOYMENT="$2"; shift 2 ;;
     --ecr)          ECR="$2";          shift 2 ;;
     --nodes)        NODES="$2";        shift 2 ;;
     --node-type)    NODE_TYPE="$2";    shift 2 ;;
@@ -125,7 +139,7 @@ derive_storage_sg() {
 
 # ---- cleanup ---------------------------------------------------------------
 if [ "$CLEANUP" -eq 1 ]; then
-  if aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION" 2>/dev/null; then
+  if aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION" >/dev/null 2>&1; then
     helm -n "$NS" uninstall "csi-mayascale" 2>/dev/null || true
     helm -n "$NS" uninstall "csi-mayanas"   2>/dev/null || true
   fi
@@ -135,6 +149,9 @@ if [ "$CLEANUP" -eq 1 ]; then
   exit 0
 fi
 
+if [ "$CREATE_ONLY" = 1 ]; then
+  log "create-only: cluster only, no driver (no storage endpoints exist yet)"
+else
 [ -n "$BACKEND_JSON" ] && [ -f "$BACKEND_JSON" ] || fail "--backend-json <file> is required"
 [ -n "$IMAGE_REF" ] || fail "no image: pass --ecr <registry> (image pushed there) or --image <ref>"
 DRIVER=$(jq -r '.driver' "$BACKEND_JSON")
@@ -144,6 +161,7 @@ VIPLIST=$(jq -r --arg d "$DRIVER" '.[$d]' "$BACKEND_JSON")
 RELEASE="csi-$DRIVER"
 IMG_REGISTRY="${IMAGE_REF%:*}"; IMG_TAG="${IMAGE_REF##*:}"
 log "driver=$DRIVER  VIPs=$VIPLIST  image=$IMAGE_REF  chart=$CHART"
+fi
 
 # ---- resolve the storage VPC + subnets -------------------------------------
 # Same VPC as the storage nodes so VPC-CNI pod IPs route to the data VIPs.
@@ -190,6 +208,9 @@ fi
 #      to the storage AZ) -----------------------------------------------------
 if eksctl get cluster --name "$CLUSTER" --region "$REGION" >/dev/null 2>&1; then
   log "EKS cluster $CLUSTER already exists"
+elif [ "$NO_CREATE" = 1 ]; then
+  fail "no EKS cluster $CLUSTER in region $REGION -- refusing to create one.
+       Check --region: a wrong region here builds a DUPLICATE cluster of the same name."
 else
   SUBNET_LINES=""
   for row in "${SUBNET_AZS[@]}"; do
@@ -203,6 +224,9 @@ kind: ClusterConfig
 metadata:
   name: ${CLUSTER}
   region: ${REGION}
+  tags:
+    zettalane-created: "true"${OWNER_DEPLOYMENT:+
+    zettalane-deployment: "$OWNER_DEPLOYMENT"}
 iam:
   withOIDC: true              # IRSA-ready (not needed for the nvme-of data path)
 vpc:
@@ -223,6 +247,8 @@ managedNodeGroups:
 EOF
 fi
 aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION"
+# Stop here on --create-only: the driver install needs storage that does not exist yet.
+[ "$CREATE_ONLY" = 1 ] && { log "cluster $CLUSTER ready (region $REGION, vpc=$VPC_ID)"; exit 0; }
 
 # ---- install external-snapshotter (CRDs + controller) ----------------------
 # EKS does NOT ship the VolumeSnapshot CRDs or the snapshot-controller (AKS/GKE
