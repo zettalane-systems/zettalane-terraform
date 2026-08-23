@@ -40,7 +40,7 @@
 #   SUBSCRIPTION (6aa9a5b8-...), RG (mayanas-testing), LOCATION (westus),
 #   VNET (mayascale-vnet), AKS_SUBNET (aks-csi-subnet), AKS_SUBNET_CIDR
 #   (10.0.20.0/24), ROUTE_TABLE (mayanas-route-table), CHART_VERSION (1.0.0),
-#   IMAGE_VERSION (1.0.6 -- must be >= 1.0.6 for single-node)
+#   IMAGE_VERSION (default: latest; pin only for a specific driver)
 
 set -euo pipefail
 log()  { echo "[aks-csi] $*"; }
@@ -107,11 +107,12 @@ DNS_SERVICE_IP="${DNS_SERVICE_IP:-192.168.100.10}"
 # zfs-single deployment fails every snapshot with "cannot locate the owning node ...
 # refusing to route a mutation to an arbitrary node" -- which reads like a storage bug.
 CHART_VERSION="${CHART_VERSION:-1.0.0}"
-# One source of truth for the driver image (see csi-version.env: the bundled mayacli
-# is in XDR lockstep with configd, so this is pinned and shared, never per-script).
+# Driver image. Default is `latest` -- CSI and zettabranch are published and verified
+# as a pair, so latest-of-both is the supported combination. csi-version.env is
+# OPTIONAL: drop it beside this script only to pin a specific driver.
 _CSI_ENV="$(dirname "$0")/csi-version.env"
 [ -r "$_CSI_ENV" ] && . "$_CSI_ENV"
-IMAGE_VERSION="${IMAGE_VERSION:-${CSI_IMAGE_VERSION:-1.0.6}}"
+IMAGE_VERSION="${IMAGE_VERSION:-${CSI_IMAGE_VERSION:-latest}}"
 NS="zettalane-csi"
 
 while [ $# -gt 0 ]; do

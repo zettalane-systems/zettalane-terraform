@@ -53,7 +53,7 @@
 #   --spot                 spot nodes (cheaper; fine for the CSI test side)
 #   --cleanup              helm uninstall + `eksctl delete cluster`, then exit
 # Env: REGION (us-east-1), VPC_ID (default-VPC of the region if unset),
-#      IMAGE_VERSION (1.0.1), CHART_VERSION (1.0.0), NVMEOF_PORTS (4430-4500),
+#      IMAGE_VERSION (latest), CHART_VERSION (1.0.0), NVMEOF_PORTS (4430-4500),
 #      SNAPSHOTTER_VERSION (v8.2.0)
 
 set -euo pipefail
@@ -82,7 +82,7 @@ CHART_VERSION="${CHART_VERSION:-1.0.0}"
 # is in XDR lockstep with configd, so this is pinned and shared, never per-script).
 _CSI_ENV="$(dirname "$0")/csi-version.env"
 [ -r "$_CSI_ENV" ] && . "$_CSI_ENV"
-IMAGE_VERSION="${IMAGE_VERSION:-${CSI_IMAGE_VERSION:-1.0.6}}"
+IMAGE_VERSION="${IMAGE_VERSION:-${CSI_IMAGE_VERSION:-latest}}"
 # external-snapshotter (CRDs + controller) — EKS doesn't ship it.
 SNAPSHOTTER_VERSION="${SNAPSHOTTER_VERSION:-v8.2.0}"
 INSTALL_SNAPSHOTTER="${INSTALL_SNAPSHOTTER:-1}"

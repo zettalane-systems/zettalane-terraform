@@ -52,7 +52,7 @@ REGION="${ZONE%-*}"
 # a 1.0.0 driver while k3s and aks ran 1.0.6.
 _CSI_ENV="$(dirname "$0")/csi-version.env"
 [ -r "$_CSI_ENV" ] && . "$_CSI_ENV"
-IMAGE_REF="${IMAGE_REF:-${CSI_IMAGE_REGISTRY:-ghcr.io/zettalane-systems}/zettalane-csi:${CSI_IMAGE_VERSION:-1.0.6}}"
+IMAGE_REF="${IMAGE_REF:-${CSI_IMAGE_REGISTRY:-ghcr.io/zettalane-systems}/zettalane-csi:${CSI_IMAGE_VERSION:-latest}}"
 CHART="${CHART:-https://zettalane.com/mayanas/csi/zettalane-csi-${CHART_VERSION}.tgz}"
 NS="zettalane-csi"
 SPOT=""   # --spot: GKE spot/preemptible nodes (cheaper; OK for the CSI test side -- not storage)
