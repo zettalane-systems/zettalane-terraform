@@ -41,8 +41,16 @@ $K -n kube-system rollout status deploy/snapshot-controller --timeout=120s 2>&1 
 
 # ---- 2. THEN enable our csi-snapshotter sidecar (needs the CRDs to exist) ----
 log "enabling controller.externalSnapshotter on release '$REL'"
+# --extra-create-metadata hands CreateSnapshot the VolumeSnapshot's name/namespace,
+# which is how the driver finds the version label to stamp as zl:version on the ZFS
+# snapshot. Without it a cold version snapshot is nameless in DR -- the tree query has
+# the data but cannot say which version it is. Set HERE, not in the chart: the chart is
+# re-fetched on every build, so a chart edit would not survive.
+# (The provisioner already carries the equivalent flag for PVCs -> zl:project/zl:branch.)
 helm upgrade "$REL" "$CHART" --version "$CHART_VER" -n "$NS" --reuse-values \
-  --set controller.externalSnapshotter.enabled=true --wait --timeout 5m 2>&1 | grep -E 'STATUS|REVISION|Error' | sed 's/^/  /'
+  --set controller.externalSnapshotter.enabled=true \
+  --set-json 'controller.externalSnapshotter.extraArgs=["--extra-create-metadata"]' \
+  --wait --timeout 5m 2>&1 | grep -E 'STATUS|REVISION|Error' | sed 's/^/  /'
 $K -n "$NS" rollout status deploy/${REL}-controller --timeout=180s 2>&1 | tail -1
 
 # ---- 3. VolumeSnapshotClass -------------------------------------------------
