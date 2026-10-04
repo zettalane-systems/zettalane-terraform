@@ -469,6 +469,7 @@ case "$CLOUD" in
                             ${AZURE_SUB_ID_CHECK:+--subscription "$AZURE_SUB_ID_CHECK"} \
                             >/dev/null; then
                         fail "az vm image terms accept failed — check Azure CLI auth + permissions"
+                        exit 1
                     fi
                     echo "✓ Terms accepted. Continuing."
                     ;;
@@ -476,6 +477,7 @@ case "$CLOUD" in
                     fail "Terms not accepted — exiting. Re-run after accepting via:
        az vm image terms accept --publisher $AZURE_PLAN_PUB \\
            --offer $AZURE_PLAN_OFFER --plan $AZURE_PLAN_NAME"
+                    exit 1
                     ;;
             esac
         fi
@@ -730,6 +732,7 @@ if [ "$DESTROY_MODE" = "true" ]; then
         success "Cleanup complete"
     else
         fail "Cleanup incomplete - check logs and retry"
+        exit 1
     fi
     exit 0
 fi
@@ -1332,9 +1335,10 @@ if [ "$SKIP_CLIENT" = "false" ]; then
                 log "Testing NFS shares: $NFS_TEST_SHARES"
                 echo ""
                 $CLIENT_SSH "sudo /tmp/nfs-test.sh --runtime 30 ${NFS_TEST_SHARES}" 2>&1 | tee "$RESULTS_DIR/nfs_performance.log"
+                rc=${PIPESTATUS[0]}
                 echo ""
 
-                if [ ${PIPESTATUS[0]} -eq 0 ]; then
+                if [ $rc -eq 0 ]; then
                     success "NFS performance test completed"
                 else
                     warn "NFS performance test had errors"

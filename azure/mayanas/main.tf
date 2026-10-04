@@ -673,13 +673,6 @@ resource "azurerm_network_interface_backend_address_pool_association" "mayanas" 
   backend_address_pool_id = azurerm_lb_backend_address_pool.mayanas[0].id
 }
 
-# VM Image data source (auto-detect MayaNAS image)
-data "azurerm_images" "mayanas" {
-  count               = var.vm_image_id == "" ? 1 : 0
-  resource_group_name = "rg-mayanas-images" # Assumed image resource group
-  # Remove name_regex - not supported in current provider
-}
-
 # Virtual Machines with System-assigned Managed Identity
 resource "azurerm_linux_virtual_machine" "mayanas" {
   count                           = local.node_count

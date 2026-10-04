@@ -50,22 +50,23 @@ echo "Testing ${#NFS_SHARES[@]} NFS share(s)"
 echo "=========================================="
 
 # Install required packages if not available
+APT="apt-get -o DPkg::Lock::Timeout=300 -y -q"
 if ! command -v fio >/dev/null 2>&1; then
-    apt-get update -q >/dev/null 2>&1
-    apt-get install -y fio >/dev/null 2>&1
+    $APT update >/dev/null 2>&1
+    $APT install fio >/dev/null 2>&1
+fi
+
+if ! command -v mount.nfs >/dev/null 2>&1; then
+    $APT install nfs-common >/dev/null 2>&1
 fi
 
 if ! command -v jq >/dev/null 2>&1; then
-    apt-get install -y jq >/dev/null 2>&1
-fi
-
-if ! command -v nfs-common >/dev/null 2>&1; then
-    apt-get install -y nfs-common >/dev/null 2>&1
+    $APT install jq >/dev/null 2>&1
 fi
 
 # Install dstat for system monitoring
 if ! command -v dstat >/dev/null 2>&1; then
-    apt-get install -y dstat >/dev/null 2>&1
+    $APT install dstat >/dev/null 2>&1 || true
 fi
 
 # Apply NFS client performance tuning
